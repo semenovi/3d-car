@@ -109,7 +109,20 @@ int main() {
         float pitch = state.orbitPitch;
         constexpr float kCamDistance = 9.0f;
         glm::vec3 dir(std::sin(baseAngle) * std::cos(pitch), std::sin(pitch), std::cos(baseAngle) * std::cos(pitch));
-        glm::vec3 cameraPos = target + dir * kCamDistance;
+
+        constexpr float kCamGroundMargin = 0.6f;
+        constexpr int kCamCollisionSteps = 16;
+        float camDistance = kCamDistance;
+        for (int i = 1; i <= kCamCollisionSteps; ++i) {
+            float t = kCamDistance * static_cast<float>(i) / static_cast<float>(kCamCollisionSteps);
+            glm::vec3 sample = target + dir * t;
+            float groundY = Terrain::heightAt(sample.x, sample.z) + kCamGroundMargin;
+            if (sample.y < groundY && std::abs(dir.y) > 1e-4f) {
+                camDistance = std::max(0.0f, (groundY - target.y) / dir.y);
+                break;
+            }
+        }
+        glm::vec3 cameraPos = target + dir * camDistance;
         glm::mat4 view = glm::lookAt(cameraPos, target, glm::vec3(0.0f, 1.0f, 0.0f));
 
         VkExtent2D extent = core.extent();
