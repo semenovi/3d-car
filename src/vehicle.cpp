@@ -41,6 +41,7 @@ constexpr float kSteerSpeedSensitivity = 0.05f;
 constexpr float kGravity = -18.0f;
 constexpr float kMaxLateralDecel = 13.0f;
 constexpr float kGroundSnapEpsilon = 0.02f;
+constexpr float kAnyCornerGroundedSlack = 1.2f;
 
 constexpr float kSuspensionSpring = 220.0f;
 constexpr float kSuspensionDamping = 20.0f;
@@ -62,6 +63,9 @@ constexpr float kTiltDampingGrounded = 15.0f;
 constexpr float kTiltSpringAir = 0.6f;
 constexpr float kTiltDampingAir = 0.5f;
 constexpr float kMaxTiltAngularVel = 4.0f;
+
+constexpr float kWheelSuspensionTravel = 0.55f;
+constexpr float kWheelSuspensionRate = 18.0f;
 
 constexpr int kWheelSegments = 10;
 constexpr float kTireHalfWidth = 0.34f;
@@ -306,16 +310,11 @@ void Vehicle::update(float dt, float throttle, float steer) {
     glm::vec3 rr = groundAt(kWheelX, kWheelRearZ);
     float groundY = (fl.y + fr.y + rl.y + rr.y) * 0.25f;
 
-    glm::vec3 rawNormal = glm::cross(fr - rl, fl - rr);
-    float rawLen = glm::length(rawNormal);
-    glm::vec3 groundNormal = tiltNormal_;
-    if (rawLen > 1e-5f) {
-        groundNormal = rawNormal / rawLen;
-        if (groundNormal.y < 0.0f) groundNormal = -groundNormal;
-    }
-
     bool wasAirborne = !grounded_;
-    if (position_.y <= groundY + kGroundSnapEpsilon) {
+    float minCornerGap = std::min({std::abs(position_.y - fl.y), std::abs(position_.y - fr.y),
+                                    std::abs(position_.y - rl.y), std::abs(position_.y - rr.y)});
+    bool plausibleLanding = !wasAirborne || minCornerGap <= kAnyCornerGroundedSlack;
+    if (position_.y <= groundY + kGroundSnapEpsilon && plausibleLanding) {
         if (wasAirborne && vY_ < -1.0f) {
             suspensionVel_ -= (-vY_) * kImpactToSuspensionVel;
         }
@@ -326,22 +325,40 @@ void Vehicle::update(float dt, float throttle, float steer) {
         grounded_ = false;
     }
 
-    auto expectedCornerY = [&](float localX, float localZ) {
+    auto attachY = [&](float localX, float localZ) {
         glm::vec3 offset = right * localX + forward * localZ;
         float dy = tiltNormal_.y > 1e-3f
             ? -(tiltNormal_.x * offset.x + tiltNormal_.z * offset.z) / tiltNormal_.y
             : 0.0f;
         return position_.y + dy;
     };
-    constexpr float kWheelContactSlack = 0.15f;
-    int contactCount = 0;
-    contactCount += fl.y >= expectedCornerY(-kWheelX, kWheelFrontZ) - kWheelContactSlack ? 1 : 0;
-    contactCount += fr.y >= expectedCornerY(kWheelX, kWheelFrontZ) - kWheelContactSlack ? 1 : 0;
-    contactCount += rl.y >= expectedCornerY(-kWheelX, kWheelRearZ) - kWheelContactSlack ? 1 : 0;
-    contactCount += rr.y >= expectedCornerY(kWheelX, kWheelRearZ) - kWheelContactSlack ? 1 : 0;
+    float attachFL = attachY(-kWheelX, kWheelFrontZ);
+    float attachFR = attachY(kWheelX, kWheelFrontZ);
+    float attachRL = attachY(-kWheelX, kWheelRearZ);
+    float attachRR = attachY(kWheelX, kWheelRearZ);
+
+    auto reach = [&](float terrainY, float attach, bool& touched) {
+        touched = terrainY >= attach - kWheelSuspensionTravel && terrainY <= attach + kWheelSuspensionTravel;
+        return std::clamp(terrainY, attach - kWheelSuspensionTravel, attach + kWheelSuspensionTravel);
+    };
+    bool touchFL, touchFR, touchRL, touchRR;
+    glm::vec3 cFL(fl.x, reach(fl.y, attachFL, touchFL), fl.z);
+    glm::vec3 cFR(fr.x, reach(fr.y, attachFR, touchFR), fr.z);
+    glm::vec3 cRL(rl.x, reach(rl.y, attachRL, touchRL), rl.z);
+    glm::vec3 cRR(rr.x, reach(rr.y, attachRR, touchRR), rr.z);
+
+    int contactCount = (touchFL ? 1 : 0) + (touchFR ? 1 : 0) + (touchRL ? 1 : 0) + (touchRR ? 1 : 0);
     float contactFraction = static_cast<float>(contactCount) * 0.25f;
 
-    smoothedGroundNormal_ = glm::mix(smoothedGroundNormal_, groundNormal, std::min(1.0f, dt * kGroundNormalSmoothRate));
+    glm::vec3 rawContactNormal = glm::cross(cFR - cRL, cFL - cRR);
+    float rawContactLen = glm::length(rawContactNormal);
+    glm::vec3 contactNormal = tiltNormal_;
+    if (rawContactLen > 1e-5f) {
+        contactNormal = rawContactNormal / rawContactLen;
+        if (contactNormal.y < 0.0f) contactNormal = -contactNormal;
+    }
+
+    smoothedGroundNormal_ = glm::mix(smoothedGroundNormal_, contactNormal, std::min(1.0f, dt * kGroundNormalSmoothRate));
     float smoothedLen = glm::length(smoothedGroundNormal_);
     if (smoothedLen > 1e-5f) smoothedGroundNormal_ /= smoothedLen;
 
@@ -365,6 +382,24 @@ void Vehicle::update(float dt, float throttle, float steer) {
 
     float targetRoll = std::clamp(-lateralSpeed * kRollPerLateralSpeed, -kMaxRoll, kMaxRoll);
     rollOffset_ += (targetRoll - rollOffset_) * std::min(1.0f, kRollRate * dt);
+
+    auto chassisCornerY = [&](float localX, float localZ) {
+        glm::vec3 offset = right * localX + forward * localZ;
+        float dy = tiltNormal_.y > 1e-3f
+            ? -(tiltNormal_.x * offset.x + tiltNormal_.z * offset.z) / tiltNormal_.y
+            : 0.0f;
+        return position_.y + dy;
+    };
+    float targetDroop[4] = {
+        chassisCornerY(-kWheelX, kWheelFrontZ) - cFL.y,
+        chassisCornerY(kWheelX, kWheelFrontZ) - cFR.y,
+        chassisCornerY(-kWheelX, kWheelRearZ) - cRL.y,
+        chassisCornerY(kWheelX, kWheelRearZ) - cRR.y,
+    };
+    for (size_t i = 0; i < 4; ++i) {
+        float clamped = std::clamp(targetDroop[i], -kWheelSuspensionTravel, kWheelSuspensionTravel);
+        wheelDroop_[i] += (clamped - wheelDroop_[i]) * std::min(1.0f, kWheelSuspensionRate * dt);
+    }
 
     wheelRoll_ += (glm::dot(velocity_, forward) / kWheelRadius) * dt;
 }
@@ -406,7 +441,8 @@ std::array<glm::mat4, 4> Vehicle::wheelMatrices() const {
 
     std::array<glm::mat4, 4> result;
     for (size_t i = 0; i < 4; ++i) {
-        glm::mat4 m = body * glm::translate(glm::mat4(1.0f), specs[i].offset);
+        glm::vec3 offset = specs[i].offset - glm::vec3(0.0f, wheelDroop_[i], 0.0f);
+        glm::mat4 m = body * glm::translate(glm::mat4(1.0f), offset);
         if (specs[i].steers) m = glm::rotate(m, steerAngle_, glm::vec3(0.0f, 1.0f, 0.0f));
         m = glm::rotate(m, wheelRoll_, glm::vec3(1.0f, 0.0f, 0.0f));
         m = glm::scale(m, glm::vec3(kWheelRadius));

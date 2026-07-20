@@ -48,4 +48,6 @@ private:
     float suspensionVel_ = 0.0f;
     float pitchOffset_ = 0.0f;
     float rollOffset_ = 0.0f;
+
+    std::array<float, 4> wheelDroop_ = {0.0f, 0.0f, 0.0f, 0.0f};
 };
