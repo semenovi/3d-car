@@ -8,6 +8,7 @@
 #include "landscape.h"
 #include "noise.h"
 #include "palette.h"
+#include "roads.h"
 
 namespace {
 
@@ -83,15 +84,26 @@ void Terrain::loadChunk(VkCore& core, Renderer& renderer, int cx, int cz) {
 
     std::vector<glm::vec3> pos((N + 1) * (N + 1));
     std::vector<glm::vec3> normal((N + 1) * (N + 1));
+    std::vector<float> roadMask((N + 1) * (N + 1));
+    std::vector<roads::EdgeSnap> snap((N + 1) * (N + 1));
     auto idx = [N](int r, int c) { return r * (N + 1) + c; };
 
+    // Snap grid vertices near a road's edge exactly onto it (see roads.h) -
+    // the road's outline ends up traced by this mesh's *own* real edges/
+    // vertices (see the boundary-line pass below), not separate overlay
+    // geometry that would need biasing to avoid depth-fighting the terrain.
     for (int r = 0; r <= N; ++r) {
         for (int c = 0; c <= N; ++c) {
-            float wx = originX + static_cast<float>(c) * kCellSize;
-            float wz = originZ + static_cast<float>(r) * kCellSize;
+            float latticeX = originX + static_cast<float>(c) * kCellSize;
+            float latticeZ = originZ + static_cast<float>(r) * kCellSize;
+            roads::EdgeSnap s = roads::snapToRoadEdge(latticeX, latticeZ);
+            float wx = s.snapped ? s.x : latticeX;
+            float wz = s.snapped ? s.z : latticeZ;
             float wy = heightAt(wx, wz);
             pos[static_cast<size_t>(idx(r, c))] = glm::vec3(wx, wy, wz);
             normal[static_cast<size_t>(idx(r, c))] = normalAt(wx, wz);
+            roadMask[static_cast<size_t>(idx(r, c))] = roads::mask(roads::distanceToNearestRoad(wx, wz));
+            snap[static_cast<size_t>(idx(r, c))] = s;
         }
     }
 
@@ -113,10 +125,56 @@ void Terrain::loadChunk(VkCore& core, Renderer& renderer, int cx, int cz) {
     for (int c = 0; c <= N; ++c)
         for (int r = 0; r < N; ++r) pushEdge(r, c, r + 1, c);
 
-    // Diagonal edges (checkerboard, to keep the mesh from becoming too cluttered).
+    auto nearRoad = [&](int r, int c) {
+        return std::max({roadMask[static_cast<size_t>(idx(r, c))], roadMask[static_cast<size_t>(idx(r + 1, c))],
+                          roadMask[static_cast<size_t>(idx(r, c + 1))], roadMask[static_cast<size_t>(idx(r + 1, c + 1))]}) > 0.05f;
+    };
+
+    // Diagonal edges (checkerboard, to keep the mesh from becoming too
+    // cluttered) - skipped near roads. On the road's flat, regular ground the
+    // diagonals of many consecutive cells end up collinear (nothing breaks
+    // their angle the way wild terrain's bumps do), so they'd read as long,
+    // straight, spurious-looking lines slicing across the road instead of
+    // the road's own boundary (the snapped-vertex polyline below).
     for (int r = 0; r < N; ++r) {
         for (int c = 0; c < N; ++c) {
+            if (nearRoad(r, c)) continue;
             if (((r + c) & 1) == 0) pushEdge(r, c, r + 1, c + 1);
+        }
+    }
+
+    // Road boundary lines: connect consecutive snapped vertices (see the snap
+    // loop above) into a continuous polyline tracing each edge. Grouped by
+    // "role" (which family/side a vertex snapped to), not by row/column index
+    // - the lattice column/row nearest to a curving road's edge shifts as the
+    // road wanders, so two consecutive rows' snapped points are often in
+    // different columns (and vice-versa for a horizontal road's columns).
+    auto pushBoundarySegment = [&](int idxA, int idxB) {
+        lineVerts.push_back({pos[static_cast<size_t>(idxA)], glm::vec3(1.0f)});
+        lineVerts.push_back({pos[static_cast<size_t>(idxB)], glm::vec3(1.0f)});
+    };
+    for (float side : {-1.0f, 1.0f}) {
+        // Vertical-family roads: one snapped column (if any) per row.
+        int prevIdx = -1;
+        for (int r = 0; r <= N; ++r) {
+            int found = -1;
+            for (int c = 0; c <= N; ++c) {
+                const roads::EdgeSnap& s = snap[static_cast<size_t>(idx(r, c))];
+                if (s.snapped && s.vertical && s.side == side) { found = idx(r, c); break; }
+            }
+            if (prevIdx >= 0 && found >= 0) pushBoundarySegment(prevIdx, found);
+            prevIdx = found;
+        }
+        // Horizontal-family roads: one snapped row (if any) per column.
+        prevIdx = -1;
+        for (int c = 0; c <= N; ++c) {
+            int found = -1;
+            for (int r = 0; r <= N; ++r) {
+                const roads::EdgeSnap& s = snap[static_cast<size_t>(idx(r, c))];
+                if (s.snapped && !s.vertical && s.side == side) { found = idx(r, c); break; }
+            }
+            if (prevIdx >= 0 && found >= 0) pushBoundarySegment(prevIdx, found);
+            prevIdx = found;
         }
     }
 
@@ -134,18 +192,25 @@ void Terrain::loadChunk(VkCore& core, Renderer& renderer, int cx, int cz) {
             const glm::vec3& p01 = pos[static_cast<size_t>(idx(r + 1, c))];
             const glm::vec3& p11 = pos[static_cast<size_t>(idx(r + 1, c + 1))];
 
+            bool onRoad = nearRoad(r, c);
+
             // Triangle A: p00, p10, p01 ; Triangle B: p10, p11, p01
             struct Tri { glm::vec3 a, b, cc; };
             Tri tris[2] = {{p00, p10, p01}, {p10, p11, p01}};
             for (int t = 0; t < 2; ++t) {
                 glm::vec3 faceNormal = glm::normalize(glm::cross(tris[t].b - tris[t].a, tris[t].cc - tris[t].a));
                 float brightness = diffuseBrightness(faceNormal);
-                uint32_t seed = static_cast<uint32_t>((r * 73856093) ^ (c * 19349663) ^ (t * 83492791) ^ (cx * 15485863) ^ (cz * 32452843));
-                float u = noise::hashFloat(static_cast<int>(seed), static_cast<int>(seed >> 8), 11u);
-                float v = noise::hashFloat(static_cast<int>(seed >> 4), static_cast<int>(seed >> 12), 22u);
-                if (u + v > 1.0f) { u = 1.0f - u; v = 1.0f - v; }
-                glm::vec3 p = tris[t].a + (tris[t].b - tris[t].a) * u + (tris[t].cc - tris[t].a) * v;
-                pointVerts.push_back({p, glm::vec3(brightness)});
+
+                if (!onRoad) {
+                    // Same reasoning as the diagonal-edge skip above: keep the
+                    // scattered-point texture for wild terrain, not the road.
+                    uint32_t seed = static_cast<uint32_t>((r * 73856093) ^ (c * 19349663) ^ (t * 83492791) ^ (cx * 15485863) ^ (cz * 32452843));
+                    float u = noise::hashFloat(static_cast<int>(seed), static_cast<int>(seed >> 8), 11u);
+                    float v = noise::hashFloat(static_cast<int>(seed >> 4), static_cast<int>(seed >> 12), 22u);
+                    if (u + v > 1.0f) { u = 1.0f - u; v = 1.0f - v; }
+                    glm::vec3 p = tris[t].a + (tris[t].b - tris[t].a) * u + (tris[t].cc - tris[t].a) * v;
+                    pointVerts.push_back({p, glm::vec3(brightness)});
+                }
 
                 solidVerts.push_back({tris[t].a, glm::vec3(brightness)});
                 solidVerts.push_back({tris[t].b, glm::vec3(brightness)});

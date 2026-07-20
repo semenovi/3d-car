@@ -12,6 +12,7 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "roads.h"
 #include "terrain.h"
 
 namespace {
@@ -209,7 +210,16 @@ void Vehicle::init(VkCore& core, Renderer& renderer) {
     auto wheelSolidVerts = buildWheelSolidMesh();
     wheelSolidMesh_ = renderer.uploadMesh(core, wheelSolidVerts);
 
-    position_ = glm::vec3(0.0f, Terrain::heightAt(0.0f, 0.0f), 0.0f);
+    // Spawn exactly on the i=0 north-south road (not just "near the origin",
+    // which the road network only happens to pass close to) and face along it.
+    float spawnZ = 0.0f;
+    float spawnX = roads::verticalLineX(0, spawnZ);
+    position_ = glm::vec3(spawnX, Terrain::heightAt(spawnX, spawnZ), spawnZ);
+
+    const float roadDirEps = 2.0f;
+    float xBack = roads::verticalLineX(0, spawnZ - roadDirEps);
+    float xFwd = roads::verticalLineX(0, spawnZ + roadDirEps);
+    yaw_ = std::atan2(xFwd - xBack, 2.0f * roadDirEps);
 }
 
 void Vehicle::cleanup(VkCore& core, Renderer& renderer) {
@@ -247,20 +257,52 @@ void Vehicle::update(float dt, float throttle, float steer) {
 
     glm::vec3 forward(std::sin(yaw_), 0.0f, std::cos(yaw_));
     position_ += forward * speed_ * dt;
-    position_.y = Terrain::heightAt(position_.x, position_.z);
 
-    glm::vec3 groundNormal = Terrain::normalAt(position_.x, position_.z);
-    tiltNormal_ = glm::normalize(glm::mix(tiltNormal_, groundNormal, std::min(1.0f, dt * 6.0f)));
+    // Sample ground height at all 4 wheel contact points (not just the body's
+    // center point) and fit a plane through them. A single center sample with
+    // a tiny finite-difference epsilon (see landscape::normalAt) can't see
+    // bumps/edges across the vehicle's actual 3m wheelbase / ~1.9m track
+    // width, so wheels would visibly clip through terrain the center-point
+    // normal didn't know about.
+    glm::vec3 right(std::cos(yaw_), 0.0f, -std::sin(yaw_));
+    auto groundAt = [&](float localX, float localZ) {
+        glm::vec3 world = position_ + right * localX + forward * localZ;
+        return glm::vec3(world.x, Terrain::heightAt(world.x, world.z), world.z);
+    };
+    glm::vec3 fl = groundAt(-kWheelX, kWheelFrontZ);
+    glm::vec3 fr = groundAt(kWheelX, kWheelFrontZ);
+    glm::vec3 rl = groundAt(-kWheelX, kWheelRearZ);
+    glm::vec3 rr = groundAt(kWheelX, kWheelRearZ);
+
+    position_.y = (fl.y + fr.y + rl.y + rr.y) * 0.25f;
+
+    glm::vec3 rawNormal = glm::cross(fr - rl, fl - rr);
+    float rawLen = glm::length(rawNormal);
+    if (rawLen > 1e-5f) {
+        glm::vec3 groundNormal = rawNormal / rawLen;
+        if (groundNormal.y < 0.0f) groundNormal = -groundNormal;
+        tiltNormal_ = glm::mix(tiltNormal_, groundNormal, std::min(1.0f, dt * 6.0f));
+    }
+    // else: degenerate sample (shouldn't happen on real terrain) - keep the
+    // previous tiltNormal_ rather than risk normalizing a near-zero vector.
+    float tiltLen = glm::length(tiltNormal_);
+    tiltNormal_ = tiltLen > 1e-5f ? tiltNormal_ / tiltLen : glm::vec3(0.0f, 1.0f, 0.0f);
 
     wheelRoll_ += (speed_ / kWheelRadius) * dt;
 }
 
 glm::mat4 Vehicle::bodyModelMatrix() const {
-    glm::vec3 forward = glm::normalize(glm::vec3(std::sin(yaw_), 0.0f, std::cos(yaw_)));
-    glm::vec3 up = tiltNormal_;
-    glm::vec3 right = glm::normalize(glm::cross(up, forward));
-    up = glm::normalize(glm::cross(forward, right));
-    forward = glm::normalize(glm::cross(right, up));
+    // Orthogonalize against `up` (the ground normal) first, and only derive
+    // `forward` from it afterwards - deriving `up` from the flat heading (as
+    // this used to do) throws away any pitch, leaving only roll.
+    glm::vec3 headingFlat = glm::normalize(glm::vec3(std::sin(yaw_), 0.0f, std::cos(yaw_)));
+    glm::vec3 up = glm::normalize(tiltNormal_);
+    glm::vec3 rightRaw = glm::cross(up, headingFlat);
+    float rightLen = glm::length(rightRaw);
+    // Degenerate only if `up` is (near-)horizontal, i.e. an ~90-degree slope -
+    // guard against it rather than normalize a near-zero vector into garbage.
+    glm::vec3 right = rightLen > 1e-5f ? rightRaw / rightLen : glm::vec3(1.0f, 0.0f, 0.0f);
+    glm::vec3 forward = glm::normalize(glm::cross(right, up));
 
     glm::mat4 model(1.0f);
     model[0] = glm::vec4(right, 0.0f);

@@ -229,8 +229,14 @@ void Renderer::createScenePipelines(VkCore& core) {
     // differently), which flickers as dashed lines. A small negative depth bias
     // nudges lines/points reliably in front so they always win that tie.
     raster.depthBiasEnable = VK_TRUE;
-    raster.depthBiasConstantFactor = -4.0f;
-    raster.depthBiasSlopeFactor = -4.0f;
+    // Large bias: thin line/point geometry (e.g. road edges traced along the
+    // exact height function) generally does *not* land exactly on the depth
+    // pre-pass triangles under it - only the terrain's own grid lines do,
+    // since those share vertices with the mesh. Anything else (road edges,
+    // vehicle wireframe near the ground) needs enough bias to reliably beat
+    // the solid surface's interpolated depth, not just resolve exact ties.
+    raster.depthBiasConstantFactor = -20.0f;
+    raster.depthBiasSlopeFactor = -20.0f;
 
     VkPipelineInputAssemblyStateCreateInfo inputAssemblyLines{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
     inputAssemblyLines.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;

@@ -71,6 +71,7 @@ add_executable(pickup_elite
     src/vk_core.cpp
     src/renderer.cpp
     src/noise.cpp
+    src/terrain_shapes.cpp
     src/roads.cpp
     src/landscape.cpp
     src/terrain.cpp
