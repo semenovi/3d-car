@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include <glm/glm.hpp>
 
 #include "renderer.h"
@@ -18,6 +20,8 @@ public:
 
     // throttle/steer in [-1, 1]; dt in seconds.
     void update(float dt, float throttle, float steer);
+    // Depth-only pass (see Renderer::drawSolid / Terrain::drawSolid) - call before draw().
+    void drawSolid(VkCommandBuffer cmd, Renderer& renderer);
     void draw(VkCommandBuffer cmd, Renderer& renderer);
 
     const glm::vec3& position() const { return position_; }
@@ -25,8 +29,13 @@ public:
     glm::mat4 bodyModelMatrix() const;
 
 private:
+    struct WheelSpec { glm::vec3 offset; bool steers; };
+    std::array<glm::mat4, 4> wheelMatrices() const;
+
     GpuMesh bodyMesh_;
+    GpuMesh bodySolidMesh_;
     GpuMesh wheelMesh_;
+    GpuMesh wheelSolidMesh_;
 
     glm::vec3 position_ = glm::vec3(0.0f, 0.0f, 0.0f);
     float yaw_ = 0.0f;

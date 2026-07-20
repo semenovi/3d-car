@@ -97,6 +97,7 @@ void Terrain::cleanup(VkCore& core, Renderer& renderer) {
     for (auto& [key, chunk] : chunks_) {
         renderer.destroyMesh(core, chunk.lines);
         renderer.destroyMesh(core, chunk.points);
+        renderer.destroyMesh(core, chunk.solid);
     }
     chunks_.clear();
 }
@@ -125,6 +126,7 @@ void Terrain::update(VkCore& core, Renderer& renderer, const glm::vec3& cameraPo
         if (std::abs(cx - camChunkX) > unloadRadius || std::abs(cz - camChunkZ) > unloadRadius) {
             renderer.destroyMesh(core, it->second.lines);
             renderer.destroyMesh(core, it->second.points);
+            renderer.destroyMesh(core, it->second.solid);
             it = chunks_.erase(it);
         } else {
             ++it;
@@ -176,9 +178,13 @@ void Terrain::loadChunk(VkCore& core, Renderer& renderer, int cx, int cz) {
         }
     }
 
-    // Scattered points across every triangle for surface readability.
+    // Scattered points across every triangle for surface readability, plus the
+    // same triangles as solid (invisible) geometry for the depth pre-pass, so
+    // terrain on the far side of a hill doesn't show through it.
     std::vector<Vertex> pointVerts;
+    std::vector<Vertex> solidVerts;
     pointVerts.reserve(static_cast<size_t>(N * N * 2));
+    solidVerts.reserve(static_cast<size_t>(N * N * 6));
     for (int r = 0; r < N; ++r) {
         for (int c = 0; c < N; ++c) {
             const glm::vec3& p00 = pos[static_cast<size_t>(idx(r, c))];
@@ -198,6 +204,10 @@ void Terrain::loadChunk(VkCore& core, Renderer& renderer, int cx, int cz) {
                 if (u + v > 1.0f) { u = 1.0f - u; v = 1.0f - v; }
                 glm::vec3 p = tris[t].a + (tris[t].b - tris[t].a) * u + (tris[t].cc - tris[t].a) * v;
                 pointVerts.push_back({p, glm::vec3(brightness)});
+
+                solidVerts.push_back({tris[t].a, glm::vec3(brightness)});
+                solidVerts.push_back({tris[t].b, glm::vec3(brightness)});
+                solidVerts.push_back({tris[t].cc, glm::vec3(brightness)});
             }
         }
     }
@@ -205,7 +215,15 @@ void Terrain::loadChunk(VkCore& core, Renderer& renderer, int cx, int cz) {
     Chunk chunk;
     chunk.lines = renderer.uploadMesh(core, lineVerts);
     chunk.points = renderer.uploadMesh(core, pointVerts);
+    chunk.solid = renderer.uploadMesh(core, solidVerts);
     chunks_[chunkKey(cx, cz)] = chunk;
+}
+
+void Terrain::drawSolid(VkCommandBuffer cmd, Renderer& renderer) {
+    glm::mat4 identity(1.0f);
+    for (auto& [key, chunk] : chunks_) {
+        renderer.drawSolid(cmd, chunk.solid, identity);
+    }
 }
 
 void Terrain::draw(VkCommandBuffer cmd, Renderer& renderer) {

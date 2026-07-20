@@ -34,6 +34,10 @@ public:
 
     void beginSceneFrame(VkCore& core, const glm::mat4& viewProj, const glm::vec3& cameraPos, float fogDistance);
     void drawMesh(VkCommandBuffer cmd, const GpuMesh& mesh, Topology topology, const glm::mat4& model, float pointSize = 4.0f);
+    // Depth-only pass: fills the depth buffer with solid (triangle) geometry so
+    // that drawMesh's lines/points behind it get discarded by the depth test,
+    // instead of showing through like an X-ray. Writes no color.
+    void drawSolid(VkCommandBuffer cmd, const GpuMesh& mesh, const glm::mat4& model);
     void drawOverlay(VkCommandBuffer cmd, const GpuMesh& mesh);
 
 private:
@@ -53,6 +57,7 @@ private:
     VkPipelineLayout sceneLayout_ = VK_NULL_HANDLE;
     VkPipeline linePipeline_ = VK_NULL_HANDLE;
     VkPipeline pointPipeline_ = VK_NULL_HANDLE;
+    VkPipeline depthPrepassPipeline_ = VK_NULL_HANDLE;
 
     VkPipelineLayout overlayLayout_ = VK_NULL_HANDLE;
     VkPipeline overlayPipeline_ = VK_NULL_HANDLE;

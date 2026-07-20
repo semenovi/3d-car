@@ -184,6 +184,11 @@ int main() {
 
         renderer.beginSceneFrame(core, viewProj, cameraPos, Terrain::kFogDistance);
 
+        // Depth-only pre-pass first, so line/point draws below get occluded by
+        // solid geometry that's actually in front of them (real hidden-line removal).
+        terrain.drawSolid(cmd, renderer);
+        vehicle.drawSolid(cmd, renderer);
+
         terrain.draw(cmd, renderer);
         vehicle.draw(cmd, renderer);
         renderer.drawOverlay(cmd, overlayMesh);

@@ -55,6 +55,7 @@ void Renderer::init(VkCore& core) {
 void Renderer::cleanup(VkCore& core) {
     vkDestroyPipeline(core.device(), linePipeline_, nullptr);
     vkDestroyPipeline(core.device(), pointPipeline_, nullptr);
+    vkDestroyPipeline(core.device(), depthPrepassPipeline_, nullptr);
     vkDestroyPipelineLayout(core.device(), sceneLayout_, nullptr);
     vkDestroyPipeline(core.device(), overlayPipeline_, nullptr);
     vkDestroyPipelineLayout(core.device(), overlayLayout_, nullptr);
@@ -174,7 +175,10 @@ void Renderer::createScenePipelines(VkCore& core) {
     VkPipelineDepthStencilStateCreateInfo depthStencil{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
     depthStencil.depthTestEnable = VK_TRUE;
     depthStencil.depthWriteEnable = VK_TRUE;
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    // LESS_OR_EQUAL (not LESS): line/point vertices are the exact same positions
+    // as the depth pre-pass triangles they belong to, so their depth is bit-exact
+    // equal, not just close - LESS would fail that comparison and cull them.
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 
     VkPipelineColorBlendAttachmentState blendAttachment{};
     blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
@@ -218,6 +222,16 @@ void Renderer::createScenePipelines(VkCore& core) {
     pipelineInfo.renderPass = core.renderPass();
     pipelineInfo.subpass = 0;
 
+    // Lines/points share their exact vertex positions with the depth pre-pass
+    // triangles they sit on. LESS_OR_EQUAL alone still leaves per-pixel depth
+    // interpolation differences between a triangle and a line/point at the same
+    // spot (line rasterization vs. triangle rasterization round slightly
+    // differently), which flickers as dashed lines. A small negative depth bias
+    // nudges lines/points reliably in front so they always win that tie.
+    raster.depthBiasEnable = VK_TRUE;
+    raster.depthBiasConstantFactor = -4.0f;
+    raster.depthBiasSlopeFactor = -4.0f;
+
     VkPipelineInputAssemblyStateCreateInfo inputAssemblyLines{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
     inputAssemblyLines.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
     pipelineInfo.pInputAssemblyState = &inputAssemblyLines;
@@ -230,6 +244,25 @@ void Renderer::createScenePipelines(VkCore& core) {
     pipelineInfo.pInputAssemblyState = &inputAssemblyPoints;
     if (vkCreateGraphicsPipelines(core.device(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pointPipeline_) != VK_SUCCESS) {
         throw std::runtime_error("failed to create point pipeline");
+    }
+
+    // Depth-only pre-pass: solid filled triangles, no color writes, no bias (it
+    // establishes the baseline depth that the biased line/point pipelines above
+    // then win against). Drawn before the line/point passes so occluded edges/
+    // points get discarded by the depth test instead of showing through solid
+    // geometry.
+    raster.depthBiasEnable = VK_FALSE;
+    VkPipelineColorBlendAttachmentState noColorAttachment = blendAttachment;
+    noColorAttachment.colorWriteMask = 0;
+    VkPipelineColorBlendStateCreateInfo noColorBlend = blend;
+    noColorBlend.pAttachments = &noColorAttachment;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssemblyTris{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    inputAssemblyTris.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    pipelineInfo.pInputAssemblyState = &inputAssemblyTris;
+    pipelineInfo.pColorBlendState = &noColorBlend;
+    if (vkCreateGraphicsPipelines(core.device(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &depthPrepassPipeline_) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create depth pre-pass pipeline");
     }
 
     vkDestroyShaderModule(core.device(), vert, nullptr);
@@ -362,6 +395,20 @@ void Renderer::drawMesh(VkCommandBuffer cmd, const GpuMesh& mesh, Topology topol
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &descriptorSets_[currentFrame_], 0, nullptr);
 
     PushConstants pc{model, glm::vec4(pointSize, 0.0f, 0.0f, 0.0f)};
+    vkCmdPushConstants(cmd, sceneLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
+
+    VkBuffer buffers[] = {mesh.vertexBuffer.buffer};
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(cmd, 0, 1, buffers, offsets);
+    vkCmdDraw(cmd, mesh.vertexCount, 1, 0, 0);
+}
+
+void Renderer::drawSolid(VkCommandBuffer cmd, const GpuMesh& mesh, const glm::mat4& model) {
+    if (mesh.vertexCount == 0) return;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, depthPrepassPipeline_);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneLayout_, 0, 1, &descriptorSets_[currentFrame_], 0, nullptr);
+
+    PushConstants pc{model, glm::vec4(0.0f)};
     vkCmdPushConstants(cmd, sceneLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
 
     VkBuffer buffers[] = {mesh.vertexBuffer.buffer};

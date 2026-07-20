@@ -29,6 +29,9 @@ public:
     // Streams chunks in/out around the camera. Call once per frame.
     void update(VkCore& core, Renderer& renderer, const glm::vec3& cameraPos);
 
+    // Fills the depth buffer with solid triangles so occluded lines/points get
+    // culled by the depth test. Must be called before draw() in the same pass.
+    void drawSolid(VkCommandBuffer cmd, Renderer& renderer);
     void draw(VkCommandBuffer cmd, Renderer& renderer);
 
     // Deterministic height field, also used by the vehicle for ground clamping.
@@ -39,6 +42,7 @@ private:
     struct Chunk {
         GpuMesh lines;
         GpuMesh points;
+        GpuMesh solid;
     };
 
     static int64_t chunkKey(int cx, int cz);

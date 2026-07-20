@@ -36,6 +36,25 @@ constexpr float kFriction = 4.0f;
 constexpr float kMaxSteerRadians = 0.55f;
 constexpr float kSteerRate = 2.5f; // how fast the steering angle approaches its target
 
+std::vector<Vertex> buildWheelSolidMesh() {
+    constexpr int kSegments = 16;
+    std::vector<Vertex> verts;
+    glm::vec3 color(kWheelBrightness);
+
+    std::vector<glm::vec3> rim(kSegments);
+    for (int i = 0; i < kSegments; ++i) {
+        float theta = (static_cast<float>(i) / static_cast<float>(kSegments)) * 6.2831853f;
+        rim[static_cast<size_t>(i)] = glm::vec3(0.0f, std::cos(theta), std::sin(theta));
+    }
+    glm::vec3 center(0.0f);
+    for (int i = 0; i < kSegments; ++i) {
+        verts.push_back({center, color});
+        verts.push_back({rim[static_cast<size_t>(i)], color});
+        verts.push_back({rim[static_cast<size_t>((i + 1) % kSegments)], color});
+    }
+    return verts;
+}
+
 std::vector<Vertex> buildWheelMesh() {
     constexpr int kSegments = 16;
     constexpr int kSpokes = 5;
@@ -98,21 +117,57 @@ std::vector<Vertex> loadBodyWireframe(const char* path) {
     return verts;
 }
 
+// Triangulated version of the same OBJ, used only for the invisible depth
+// pre-pass (fills the depth buffer so the far side of the body doesn't show
+// through as X-ray wireframe).
+std::vector<Vertex> loadBodySolid(const char* path) {
+    tinyobj::ObjReaderConfig config;
+    config.triangulate = true;
+    tinyobj::ObjReader reader;
+    if (!reader.ParseFromFile(path, config)) {
+        fprintf(stderr, "[vehicle] failed to load %s: %s\n", path, reader.Error().c_str());
+        return {};
+    }
+
+    const tinyobj::attrib_t& attrib = reader.GetAttrib();
+    std::vector<Vertex> verts;
+    glm::vec3 color(kBodyBrightness);
+
+    auto vertexAt = [&](int i) {
+        return glm::vec3(attrib.vertices[static_cast<size_t>(3 * i + 0)],
+                          attrib.vertices[static_cast<size_t>(3 * i + 1)],
+                          attrib.vertices[static_cast<size_t>(3 * i + 2)]);
+    };
+
+    for (const auto& shape : reader.GetShapes()) {
+        for (const auto& index : shape.mesh.indices) {
+            verts.push_back({vertexAt(index.vertex_index), color});
+        }
+    }
+    return verts;
+}
+
 } // namespace
 
 void Vehicle::init(VkCore& core, Renderer& renderer) {
     auto bodyVerts = loadBodyWireframe(RESOURCE_DIR "models/pickup.obj");
     bodyMesh_ = renderer.uploadMesh(core, bodyVerts);
+    auto bodySolidVerts = loadBodySolid(RESOURCE_DIR "models/pickup.obj");
+    bodySolidMesh_ = renderer.uploadMesh(core, bodySolidVerts);
 
     auto wheelVerts = buildWheelMesh();
     wheelMesh_ = renderer.uploadMesh(core, wheelVerts);
+    auto wheelSolidVerts = buildWheelSolidMesh();
+    wheelSolidMesh_ = renderer.uploadMesh(core, wheelSolidVerts);
 
     position_ = glm::vec3(0.0f, Terrain::heightAt(0.0f, 0.0f), 0.0f);
 }
 
 void Vehicle::cleanup(VkCore& core, Renderer& renderer) {
     renderer.destroyMesh(core, bodyMesh_);
+    renderer.destroyMesh(core, bodySolidMesh_);
     renderer.destroyMesh(core, wheelMesh_);
+    renderer.destroyMesh(core, wheelSolidMesh_);
 }
 
 void Vehicle::update(float dt, float throttle, float steer) {
@@ -166,23 +221,36 @@ glm::mat4 Vehicle::bodyModelMatrix() const {
     return model;
 }
 
-void Vehicle::draw(VkCommandBuffer cmd, Renderer& renderer) {
+std::array<glm::mat4, 4> Vehicle::wheelMatrices() const {
     glm::mat4 body = bodyModelMatrix();
-    renderer.drawMesh(cmd, bodyMesh_, Topology::Lines, body);
-
-    struct WheelSpec { glm::vec3 offset; bool steers; };
-    const WheelSpec wheels[4] = {
+    const WheelSpec specs[4] = {
         {{-kWheelX, kWheelY, kWheelFrontZ}, true},
         {{kWheelX, kWheelY, kWheelFrontZ}, true},
         {{-kWheelX, kWheelY, kWheelRearZ}, false},
         {{kWheelX, kWheelY, kWheelRearZ}, false},
     };
 
-    for (const auto& w : wheels) {
-        glm::mat4 m = body * glm::translate(glm::mat4(1.0f), w.offset);
-        if (w.steers) m = glm::rotate(m, steerAngle_, glm::vec3(0.0f, 1.0f, 0.0f));
+    std::array<glm::mat4, 4> result;
+    for (size_t i = 0; i < 4; ++i) {
+        glm::mat4 m = body * glm::translate(glm::mat4(1.0f), specs[i].offset);
+        if (specs[i].steers) m = glm::rotate(m, steerAngle_, glm::vec3(0.0f, 1.0f, 0.0f));
         m = glm::rotate(m, wheelRoll_, glm::vec3(1.0f, 0.0f, 0.0f));
         m = glm::scale(m, glm::vec3(kWheelRadius));
+        result[i] = m;
+    }
+    return result;
+}
+
+void Vehicle::drawSolid(VkCommandBuffer cmd, Renderer& renderer) {
+    renderer.drawSolid(cmd, bodySolidMesh_, bodyModelMatrix());
+    for (const auto& m : wheelMatrices()) {
+        renderer.drawSolid(cmd, wheelSolidMesh_, m);
+    }
+}
+
+void Vehicle::draw(VkCommandBuffer cmd, Renderer& renderer) {
+    renderer.drawMesh(cmd, bodyMesh_, Topology::Lines, bodyModelMatrix());
+    for (const auto& m : wheelMatrices()) {
         renderer.drawMesh(cmd, wheelMesh_, Topology::Lines, m);
     }
 }
