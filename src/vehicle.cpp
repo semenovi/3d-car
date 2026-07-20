@@ -1,11 +1,10 @@
 #include "vehicle.h"
 
-#define TINYOBJLOADER_IMPLEMENTATION
-#include <tiny_obj_loader.h>
-
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <set>
 #include <utility>
 #include <vector>
@@ -180,67 +179,76 @@ std::vector<Vertex> buildWheelMesh() {
     return verts;
 }
 
-std::vector<Vertex> loadBodyWireframe(const char* path) {
-    tinyobj::ObjReaderConfig config;
-    config.triangulate = false;
-    tinyobj::ObjReader reader;
-    if (!reader.ParseFromFile(path, config)) {
-        fprintf(stderr, "[vehicle] failed to load %s: %s\n", path, reader.Error().c_str());
-        return {};
-    }
+struct RawObjMesh {
+    std::vector<glm::vec3> vertices;
+    std::vector<std::vector<int>> faces;  // 0-indexed
+};
 
-    const tinyobj::attrib_t& attrib = reader.GetAttrib();
+RawObjMesh parseObj(const char* path) {
+    RawObjMesh mesh;
+    FILE* file = fopen(path, "r");
+    if (!file) {
+        fprintf(stderr, "[vehicle] failed to open %s\n", path);
+        return mesh;
+    }
+    char line[512];
+    while (fgets(line, sizeof(line), file)) {
+        if (line[0] == 'v' && (line[1] == ' ' || line[1] == '\t')) {
+            glm::vec3 v(0.0f);
+            sscanf(line + 1, "%f %f %f", &v.x, &v.y, &v.z);
+            mesh.vertices.push_back(v);
+        } else if (line[0] == 'f' && (line[1] == ' ' || line[1] == '\t')) {
+            std::vector<int> face;
+            char* tok = strtok(line + 1, " \t\r\n");
+            while (tok) {
+                int idx = atoi(tok);
+                face.push_back(idx - 1);
+                tok = strtok(nullptr, " \t\r\n");
+            }
+            if (face.size() >= 3) {
+                mesh.faces.push_back(std::move(face));
+            }
+        }
+    }
+    fclose(file);
+    return mesh;
+}
+
+std::vector<Vertex> loadBodyWireframe(const char* path) {
+    RawObjMesh obj = parseObj(path);
     std::set<std::pair<int, int>> uniqueEdges;
     std::vector<Vertex> verts;
     glm::vec3 color(kBodyBrightness);
 
-    auto vertexAt = [&](int i) {
-        return glm::vec3(attrib.vertices[static_cast<size_t>(3 * i + 0)],
-                          attrib.vertices[static_cast<size_t>(3 * i + 1)],
-                          attrib.vertices[static_cast<size_t>(3 * i + 2)]);
-    };
+    auto vertexAt = [&](int i) { return obj.vertices[static_cast<size_t>(i)]; };
 
-    for (const auto& shape : reader.GetShapes()) {
-        size_t offset = 0;
-        for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
-            int faceVerts = shape.mesh.num_face_vertices[f];
-            for (int i = 0; i < faceVerts; ++i) {
-                int a = shape.mesh.indices[offset + static_cast<size_t>(i)].vertex_index;
-                int b = shape.mesh.indices[offset + static_cast<size_t>((i + 1) % faceVerts)].vertex_index;
-                auto edge = std::make_pair(std::min(a, b), std::max(a, b));
-                if (uniqueEdges.insert(edge).second) {
-                    verts.push_back({vertexAt(a), color});
-                    verts.push_back({vertexAt(b), color});
-                }
+    for (const auto& face : obj.faces) {
+        int faceVerts = static_cast<int>(face.size());
+        for (int i = 0; i < faceVerts; ++i) {
+            int a = face[static_cast<size_t>(i)];
+            int b = face[static_cast<size_t>((i + 1) % faceVerts)];
+            auto edge = std::make_pair(std::min(a, b), std::max(a, b));
+            if (uniqueEdges.insert(edge).second) {
+                verts.push_back({vertexAt(a), color});
+                verts.push_back({vertexAt(b), color});
             }
-            offset += static_cast<size_t>(faceVerts);
         }
     }
     return verts;
 }
 
 std::vector<Vertex> loadBodySolid(const char* path) {
-    tinyobj::ObjReaderConfig config;
-    config.triangulate = true;
-    tinyobj::ObjReader reader;
-    if (!reader.ParseFromFile(path, config)) {
-        fprintf(stderr, "[vehicle] failed to load %s: %s\n", path, reader.Error().c_str());
-        return {};
-    }
-
-    const tinyobj::attrib_t& attrib = reader.GetAttrib();
+    RawObjMesh obj = parseObj(path);
     std::vector<Vertex> verts;
     glm::vec3 color(kBodyBrightness);
 
-    auto vertexAt = [&](int i) {
-        return glm::vec3(attrib.vertices[static_cast<size_t>(3 * i + 0)],
-                          attrib.vertices[static_cast<size_t>(3 * i + 1)],
-                          attrib.vertices[static_cast<size_t>(3 * i + 2)]);
-    };
+    auto vertexAt = [&](int i) { return obj.vertices[static_cast<size_t>(i)]; };
 
-    for (const auto& shape : reader.GetShapes()) {
-        for (const auto& index : shape.mesh.indices) {
-            verts.push_back({vertexAt(index.vertex_index), color});
+    for (const auto& face : obj.faces) {
+        for (size_t i = 1; i + 1 < face.size(); ++i) {
+            verts.push_back({vertexAt(face[0]), color});
+            verts.push_back({vertexAt(face[i]), color});
+            verts.push_back({vertexAt(face[i + 1]), color});
         }
     }
     return verts;

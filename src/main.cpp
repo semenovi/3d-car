@@ -1,11 +1,8 @@
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
-#include <stdexcept>
 #include <string>
-
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -16,6 +13,7 @@
 #include "vecfont.h"
 #include "vehicle.h"
 #include "vk_core.h"
+#include "window.h"
 
 namespace {
 
@@ -23,56 +21,27 @@ constexpr int kDefaultWidth = 1280;
 constexpr int kDefaultHeight = 720;
 
 struct AppState {
-    VkCore* core = nullptr;
-    bool firstMouse = true;
-    double lastMouseX = 0.0, lastMouseY = 0.0;
     float orbitYaw = 0.0f;
     float orbitPitch = 0.32f;
-
-    bool fullscreen = false;
-    int windowedX = 100, windowedY = 100, windowedW = kDefaultWidth, windowedH = kDefaultHeight;
     bool f11WasDown = false;
 };
 
-void framebufferResizeCallback(GLFWwindow* window, int, int) {
-    auto* state = reinterpret_cast<AppState*>(glfwGetWindowUserPointer(window));
-    if (state && state->core) state->core->framebufferResized = true;
-}
-
-void toggleFullscreen(GLFWwindow* window, AppState& state) {
-    if (!state.fullscreen) {
-        glfwGetWindowPos(window, &state.windowedX, &state.windowedY);
-        glfwGetWindowSize(window, &state.windowedW, &state.windowedH);
-        GLFWmonitor* monitor = glfwGetPrimaryMonitor();
-        const GLFWvidmode* mode = glfwGetVideoMode(monitor);
-        glfwSetWindowMonitor(window, monitor, 0, 0, mode->width, mode->height, mode->refreshRate);
-        state.fullscreen = true;
-    } else {
-        glfwSetWindowMonitor(window, nullptr, state.windowedX, state.windowedY, state.windowedW, state.windowedH, 0);
-        state.fullscreen = false;
-    }
+double nowSeconds() {
+    using Clock = std::chrono::steady_clock;
+    static const Clock::time_point start = Clock::now();
+    return std::chrono::duration<double>(Clock::now() - start).count();
 }
 
 }
 
 int main() {
-    if (!glfwInit()) {
-        fprintf(stderr, "failed to initialize GLFW\n");
-        return 1;
-    }
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-
-    GLFWwindow* window = glfwCreateWindow(kDefaultWidth, kDefaultHeight, "Pickup / Elite-style vector renderer", nullptr, nullptr);
-    if (!window) {
+    Window window;
+    if (!window.create(kDefaultWidth, kDefaultHeight, "Pickup / Elite-style vector renderer")) {
         fprintf(stderr, "failed to create window\n");
-        glfwTerminate();
         return 1;
     }
 
     AppState state;
-    glfwSetWindowUserPointer(window, &state);
-    glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
     VkCore core;
     Renderer renderer;
@@ -80,17 +49,11 @@ int main() {
     Vehicle vehicle;
     AudioEngine audio;
 
-    try {
-        core.init(window);
-        state.core = &core;
-        renderer.init(core);
-        terrain.init(core, renderer);
-        vehicle.init(core, renderer);
-        audio.init();
-    } catch (const std::exception& e) {
-        fprintf(stderr, "initialization failed: %s\n", e.what());
-        return 1;
-    }
+    core.init(&window);
+    renderer.init(core);
+    terrain.init(core, renderer);
+    vehicle.init(core, renderer);
+    audio.init();
 
     int lastGear = vehicle.gear();
 
@@ -98,48 +61,40 @@ int main() {
     constexpr size_t kMaxOverlayVertsPerChar = 14;
     GpuMesh overlayMesh = renderer.uploadDynamicMesh(core, sizeof(Vertex) * kMaxOverlayChars * kMaxOverlayVertsPerChar);
 
-    double lastTime = glfwGetTime();
+    double lastTime = nowSeconds();
     double fpsAccum = 0.0;
     int fpsFrameCount = 0;
     int lastFps = 0;
 
-    while (!glfwWindowShouldClose(window)) {
-        glfwPollEvents();
+    while (!window.shouldClose()) {
+        window.pollEvents();
+        if (window.consumeFramebufferResized()) core.framebufferResized = true;
 
-        double now = glfwGetTime();
+        double now = nowSeconds();
         float dt = static_cast<float>(now - lastTime);
         lastTime = now;
         dt = std::min(dt, 0.1f);
 
-        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-            glfwSetWindowShouldClose(window, GLFW_TRUE);
+        if (window.isKeyDown(VK_ESCAPE)) {
+            window.requestClose();
         }
 
-        bool f11Down = glfwGetKey(window, GLFW_KEY_F11) == GLFW_PRESS;
-        if (f11Down && !state.f11WasDown) toggleFullscreen(window, state);
+        bool f11Down = window.isKeyDown(VK_F11);
+        if (f11Down && !state.f11WasDown) window.toggleFullscreen();
         state.f11WasDown = f11Down;
 
-        double mx, my;
-        glfwGetCursorPos(window, &mx, &my);
-        if (state.firstMouse) {
-            state.lastMouseX = mx;
-            state.lastMouseY = my;
-            state.firstMouse = false;
-        }
-        double dx = mx - state.lastMouseX;
-        double dy = my - state.lastMouseY;
-        state.lastMouseX = mx;
-        state.lastMouseY = my;
+        double dx, dy;
+        window.consumeMouseDelta(dx, dy);
         constexpr float kMouseSensitivity = 0.0028f;
         state.orbitYaw += static_cast<float>(-dx) * kMouseSensitivity;
         state.orbitPitch += static_cast<float>(dy) * kMouseSensitivity;
         state.orbitPitch = std::clamp(state.orbitPitch, -0.9f, 1.2f);
 
         float throttle = 0.0f, steer = 0.0f;
-        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) throttle += 1.0f;
-        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) throttle -= 1.0f;
-        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) steer -= 1.0f;
-        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) steer += 1.0f;
+        if (window.isKeyDown('W')) throttle += 1.0f;
+        if (window.isKeyDown('S')) throttle -= 1.0f;
+        if (window.isKeyDown('D')) steer -= 1.0f;
+        if (window.isKeyDown('A')) steer += 1.0f;
         vehicle.update(dt, throttle, steer);
         terrain.update(core, renderer, vehicle.position());
 
@@ -222,7 +177,6 @@ int main() {
     renderer.cleanup(core);
     core.cleanup();
 
-    glfwDestroyWindow(window);
-    glfwTerminate();
+    window.destroy();
     return 0;
 }

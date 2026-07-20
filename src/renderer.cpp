@@ -3,7 +3,6 @@
 #include <array>
 #include <cstring>
 #include <fstream>
-#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -20,7 +19,7 @@ struct PushConstants {
 
 std::vector<char> readFile(const std::string& path) {
     std::ifstream file(path, std::ios::ate | std::ios::binary);
-    if (!file.is_open()) throw std::runtime_error("failed to open shader file: " + path);
+    if (!file.is_open()) fatalError("failed to open shader file: " + path);
     size_t size = static_cast<size_t>(file.tellg());
     std::vector<char> buffer(size);
     file.seekg(0);
@@ -38,7 +37,7 @@ VkShaderModule Renderer::loadShader(VkCore& core, const char* filename) const {
     createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
     VkShaderModule module;
     if (vkCreateShaderModule(core.device(), &createInfo, nullptr, &module) != VK_SUCCESS) {
-        throw std::runtime_error(std::string("failed to create shader module: ") + filename);
+        fatalError(std::string("failed to create shader module: ") + filename);
     }
     return module;
 }
@@ -76,7 +75,7 @@ void Renderer::createDescriptorSetLayout(VkCore& core) {
     layoutInfo.bindingCount = 1;
     layoutInfo.pBindings = &uboBinding;
     if (vkCreateDescriptorSetLayout(core.device(), &layoutInfo, nullptr, &descriptorSetLayout_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create descriptor set layout");
+        fatalError("failed to create descriptor set layout");
     }
 }
 
@@ -98,7 +97,7 @@ void Renderer::createDescriptorPool(VkCore& core) {
     poolInfo.pPoolSizes = &poolSize;
     poolInfo.maxSets = VkCore::kMaxFramesInFlight;
     if (vkCreateDescriptorPool(core.device(), &poolInfo, nullptr, &descriptorPool_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create descriptor pool");
+        fatalError("failed to create descriptor pool");
     }
 }
 
@@ -111,7 +110,7 @@ void Renderer::createDescriptorSets(VkCore& core) {
 
     descriptorSets_.resize(VkCore::kMaxFramesInFlight);
     if (vkAllocateDescriptorSets(core.device(), &allocInfo, descriptorSets_.data()) != VK_SUCCESS) {
-        throw std::runtime_error("failed to allocate descriptor sets");
+        fatalError("failed to allocate descriptor sets");
     }
 
     for (size_t i = 0; i < descriptorSets_.size(); ++i) {
@@ -202,7 +201,7 @@ void Renderer::createScenePipelines(VkCore& core) {
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges = &pushRange;
     if (vkCreatePipelineLayout(core.device(), &layoutInfo, nullptr, &sceneLayout_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create scene pipeline layout");
+        fatalError("failed to create scene pipeline layout");
     }
 
     VkGraphicsPipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
@@ -227,14 +226,14 @@ void Renderer::createScenePipelines(VkCore& core) {
     inputAssemblyLines.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
     pipelineInfo.pInputAssemblyState = &inputAssemblyLines;
     if (vkCreateGraphicsPipelines(core.device(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &linePipeline_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create line pipeline");
+        fatalError("failed to create line pipeline");
     }
 
     VkPipelineInputAssemblyStateCreateInfo inputAssemblyPoints{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
     inputAssemblyPoints.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
     pipelineInfo.pInputAssemblyState = &inputAssemblyPoints;
     if (vkCreateGraphicsPipelines(core.device(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pointPipeline_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create point pipeline");
+        fatalError("failed to create point pipeline");
     }
 
     raster.depthBiasEnable = VK_FALSE;
@@ -248,7 +247,7 @@ void Renderer::createScenePipelines(VkCore& core) {
     pipelineInfo.pInputAssemblyState = &inputAssemblyTris;
     pipelineInfo.pColorBlendState = &noColorBlend;
     if (vkCreateGraphicsPipelines(core.device(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &depthPrepassPipeline_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create depth pre-pass pipeline");
+        fatalError("failed to create depth pre-pass pipeline");
     }
 
     vkDestroyShaderModule(core.device(), vert, nullptr);
@@ -306,7 +305,7 @@ void Renderer::createOverlayPipeline(VkCore& core) {
 
     VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     if (vkCreatePipelineLayout(core.device(), &layoutInfo, nullptr, &overlayLayout_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create overlay pipeline layout");
+        fatalError("failed to create overlay pipeline layout");
     }
 
     VkGraphicsPipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
@@ -325,7 +324,7 @@ void Renderer::createOverlayPipeline(VkCore& core) {
     pipelineInfo.subpass = 0;
 
     if (vkCreateGraphicsPipelines(core.device(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &overlayPipeline_) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create overlay pipeline");
+        fatalError("failed to create overlay pipeline");
     }
 
     vkDestroyShaderModule(core.device(), vert, nullptr);
@@ -356,7 +355,7 @@ void Renderer::updateDynamicMesh(VkCore& core, GpuMesh& mesh, const std::vector<
     }
     VkDeviceSize size = sizeof(Vertex) * vertices.size();
     if (size > mesh.vertexBuffer.size) {
-        throw std::runtime_error("dynamic mesh exceeded its preallocated capacity");
+        fatalError("dynamic mesh exceeded its preallocated capacity");
     }
     core.uploadToHostVisible(mesh.vertexBuffer, vertices.data(), size);
     mesh.vertexCount = static_cast<uint32_t>(vertices.size());

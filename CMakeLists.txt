@@ -9,32 +9,19 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
+if(MSVC)
+    set(CMAKE_CXX_FLAGS_RELEASE "/O1 /Ob2 /DNDEBUG /GL /Gy /Gw" CACHE STRING "" FORCE)
+    set(CMAKE_EXE_LINKER_FLAGS_RELEASE "/INCREMENTAL:NO /LTCG /OPT:REF /OPT:ICF" CACHE STRING "" FORCE)
+endif()
+
 find_package(Vulkan REQUIRED)
 
 include(FetchContent)
 
 FetchContent_Declare(
-    glfw
-    GIT_REPOSITORY https://github.com/glfw/glfw.git
-    GIT_TAG 3.4
-    GIT_SHALLOW TRUE
-)
-set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
-
-FetchContent_Declare(
     glm
     GIT_REPOSITORY https://github.com/g-truc/glm.git
     GIT_TAG 1.0.1
-    GIT_SHALLOW TRUE
-)
-
-FetchContent_Declare(
-    tinyobjloader
-    GIT_REPOSITORY https://github.com/tinyobjloader/tinyobjloader.git
-    GIT_TAG v2.0.0rc13
     GIT_SHALLOW TRUE
 )
 
@@ -45,7 +32,7 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
-FetchContent_MakeAvailable(glfw glm tinyobjloader miniaudio)
+FetchContent_MakeAvailable(glm miniaudio)
 
 find_program(GLSLC_EXECUTABLE glslc HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin")
 if(NOT GLSLC_EXECUTABLE)
@@ -73,6 +60,7 @@ add_custom_target(shaders DEPENDS ${COMPILED_SHADERS})
 
 add_executable(pickup_elite
     src/main.cpp
+    src/window.cpp
     src/vk_core.cpp
     src/renderer.cpp
     src/noise.cpp
@@ -87,14 +75,23 @@ add_executable(pickup_elite
 
 add_dependencies(pickup_elite shaders)
 
-target_include_directories(pickup_elite PRIVATE src ${tinyobjloader_SOURCE_DIR} ${miniaudio_SOURCE_DIR})
-target_link_libraries(pickup_elite PRIVATE Vulkan::Vulkan glfw glm::glm)
+target_include_directories(pickup_elite PRIVATE src ${miniaudio_SOURCE_DIR})
+target_link_libraries(pickup_elite PRIVATE Vulkan::Vulkan glm::glm user32)
 
 target_compile_definitions(pickup_elite PRIVATE
     SHADER_DIR="${SHADER_BINARY_DIR}/"
     RESOURCE_DIR="${CMAKE_SOURCE_DIR}/resources/"
+    _CRT_SECURE_NO_WARNINGS
 )
 
 if(MSVC)
     target_compile_options(pickup_elite PRIVATE /W4)
+    target_compile_options(pickup_elite PRIVATE $<$<CONFIG:Release>:/GR->)
+endif()
+
+if(WIN32)
+    add_custom_command(TARGET pickup_elite POST_BUILD
+        COMMAND "$<$<CONFIG:Release>:${CMAKE_SOURCE_DIR}/pack_release.cmd>" "$<TARGET_FILE:pickup_elite>"
+        VERBATIM
+    )
 endif()

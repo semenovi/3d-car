@@ -1,17 +1,35 @@
 #pragma once
 
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define VK_USE_PLATFORM_WIN32_KHR
+#include <vulkan/vulkan.h>
 
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <optional>
+#include <string>
 #include <vector>
+
+#include "window.h"
+
+[[noreturn]] inline void fatalError(const char* msg) {
+    fprintf(stderr, "initialization failed: %s\n", msg);
+    fflush(stderr);
+    std::abort();
+}
+[[noreturn]] inline void fatalError(const std::string& msg) { fatalError(msg.c_str()); }
 
 class VkCore {
 public:
     static constexpr int kMaxFramesInFlight = 2;
 
-    void init(GLFWwindow* window);
+    void init(Window* window);
     void cleanup();
 
     void recreateSwapchain();
@@ -73,7 +91,7 @@ private:
     VkExtent2D chooseExtent(const VkSurfaceCapabilitiesKHR& caps) const;
     VkFormat findDepthFormat() const;
 
-    GLFWwindow* window_ = nullptr;
+    Window* window_ = nullptr;
     VkInstance instance_ = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT debugMessenger_ = VK_NULL_HANDLE;
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;
