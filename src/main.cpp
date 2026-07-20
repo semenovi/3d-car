@@ -129,16 +129,16 @@ int main() {
         state.lastMouseX = mx;
         state.lastMouseY = my;
         constexpr float kMouseSensitivity = 0.0028f;
-        state.orbitYaw += static_cast<float>(dx) * kMouseSensitivity;
-        state.orbitPitch += static_cast<float>(-dy) * kMouseSensitivity;
+        state.orbitYaw += static_cast<float>(-dx) * kMouseSensitivity;
+        state.orbitPitch += static_cast<float>(dy) * kMouseSensitivity;
         state.orbitPitch = std::clamp(state.orbitPitch, -0.9f, 1.2f);
 
         // ---- WASD vehicle control ----
         float throttle = 0.0f, steer = 0.0f;
-        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) throttle += 1.0f;
-        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) throttle -= 1.0f;
-        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) steer += 1.0f;
-        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) steer -= 1.0f;
+        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) throttle -= 1.0f;
+        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) throttle += 1.0f;
+        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) steer -= 1.0f;
+        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) steer += 1.0f;
         vehicle.update(dt, throttle, steer);
         terrain.update(core, renderer, vehicle.position());
 
