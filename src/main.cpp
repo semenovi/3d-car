@@ -89,7 +89,7 @@ int main() {
         return 1;
     }
 
-    constexpr size_t kMaxOverlayChars = 24;
+    constexpr size_t kMaxOverlayChars = 48;
     constexpr size_t kMaxOverlayVertsPerChar = 14;
     GpuMesh overlayMesh = renderer.uploadDynamicMesh(core, sizeof(Vertex) * kMaxOverlayChars * kMaxOverlayVertsPerChar);
 
@@ -169,6 +169,22 @@ int main() {
         glm::vec2 origin(1.0f - 2.0f * marginPx / static_cast<float>(extent.width) - textWidthNdc,
                           -1.0f + 2.0f * marginPx / static_cast<float>(extent.height));
         auto overlayVerts = vecfont::buildText(fpsText, origin, glyphSize, spacingNdc, glm::vec3(1.0f));
+
+        std::string gearText = vehicle.gear() == -1 ? "R" : std::to_string(vehicle.gear());
+        std::string rpmText = "R:" + std::to_string(static_cast<int>(vehicle.engineRpm() + 0.5f));
+        std::string speedText = "S:" + std::to_string(static_cast<int>(vehicle.speedKmh() + 0.5f));
+        std::string gearLine = "G:" + gearText;
+
+        float lineHeightNdc = 2.0f * (pixelH + 8.0f) / static_cast<float>(extent.height);
+        glm::vec2 hudOrigin(-1.0f + 2.0f * marginPx / static_cast<float>(extent.width),
+                             1.0f - 2.0f * marginPx / static_cast<float>(extent.height) - lineHeightNdc);
+        const std::string hudLines[3] = {speedText, gearLine, rpmText};
+        for (int i = 0; i < 3; ++i) {
+            glm::vec2 lineOrigin(hudOrigin.x, hudOrigin.y - static_cast<float>(i) * lineHeightNdc);
+            auto lineVerts = vecfont::buildText(hudLines[static_cast<size_t>(i)], lineOrigin, glyphSize, spacingNdc, glm::vec3(1.0f));
+            overlayVerts.insert(overlayVerts.end(), lineVerts.begin(), lineVerts.end());
+        }
+
         renderer.updateDynamicMesh(core, overlayMesh, overlayVerts);
 
         VkCommandBuffer cmd;

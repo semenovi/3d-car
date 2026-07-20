@@ -20,6 +20,10 @@ public:
     float yaw() const { return yaw_; }
     glm::mat4 bodyModelMatrix() const;
 
+    int gear() const { return gear_; }
+    float engineRpm() const { return engineRpm_; }
+    float speedKmh() const { return speed_ * 3.6f; }
+
 private:
     struct WheelSpec { glm::vec3 offset; bool steers; };
     glm::mat4 groundModelMatrix() const;
@@ -50,4 +54,9 @@ private:
     float rollOffset_ = 0.0f;
 
     std::array<float, 4> wheelDroop_ = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    int gear_ = 1;
+    float engineRpm_ = 900.0f;
+    float shiftTimer_ = 0.0f;
+    float shiftCooldown_ = 0.0f;
 };

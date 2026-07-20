@@ -27,6 +27,8 @@ std::vector<Seg> glyphSegments(char c) {
         case 'F': return {kTop, kTopLeft, kMiddle, kBottomLeft};
         case 'P': return {kTop, kTopLeft, kTopRight, kMiddle, kBottomLeft};
         case 'S': return {kTop, kTopLeft, kMiddle, kBottomRight, kBottom};
+        case 'G': return {kTop, kTopLeft, kBottomLeft, kBottom, kBottomRight};
+        case 'R': return {kMiddle, kBottomLeft};
         case ':': return {Seg{0.45f, 0.62f, 0.55f, 0.62f}, Seg{0.45f, 0.38f, 0.55f, 0.38f}};
         case '-': return {kMiddle};
         default: return {};

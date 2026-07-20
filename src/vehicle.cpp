@@ -27,7 +27,7 @@ constexpr float kWheelbase = kWheelFrontZ - kWheelRearZ;
 constexpr float kBodyBrightness = 0.85f;
 constexpr float kWheelBrightness = 0.75f;
 
-constexpr float kMaxSpeed = 22.0f;
+constexpr float kMaxSpeed = 52.0f;
 constexpr float kReverseMaxSpeed = 8.0f;
 constexpr float kAcceleration = 9.0f;
 constexpr float kBrakeDeceleration = 16.0f;
@@ -70,6 +70,37 @@ constexpr float kWheelSuspensionRate = 18.0f;
 constexpr int kWheelSegments = 10;
 constexpr float kTireHalfWidth = 0.34f;
 constexpr float kHubRadius = 0.55f;
+
+constexpr int kNumForwardGears = 5;
+constexpr float kGearRatios[kNumForwardGears] = {3.8f, 2.4f, 1.6f, 1.15f, 0.9f};
+constexpr float kReverseGearRatio = 3.2f;
+constexpr float kFinalDrive = 4.1f;
+constexpr float kIdleRpm = 900.0f;
+constexpr float kRedlineRpm = 6000.0f;
+constexpr float kPeakTorqueRpm = 3500.0f;
+constexpr float kIdleTorqueFactor = 0.45f;
+constexpr float kRedlineTorqueFactor = 0.55f;
+constexpr float kUpshiftRpm = 5200.0f;
+constexpr float kDownshiftRpm = 1600.0f;
+constexpr float kLugRpm = 2200.0f;
+constexpr float kUphillSlopeThreshold = 0.06f;
+constexpr float kRpmSmoothRate = 6.0f;
+constexpr float kIdleBlipPerThrottle = 1200.0f;
+constexpr float kShiftDuration = 0.28f;
+constexpr float kShiftCooldown = 0.5f;
+
+float engineTorqueFactor(float rpm) {
+    if (rpm <= kPeakTorqueRpm) {
+        float t = std::clamp((rpm - kIdleRpm) / (kPeakTorqueRpm - kIdleRpm), 0.0f, 1.0f);
+        return kIdleTorqueFactor + (1.0f - kIdleTorqueFactor) * t;
+    }
+    float t = std::clamp((rpm - kPeakTorqueRpm) / (kRedlineRpm - kPeakTorqueRpm), 0.0f, 1.0f);
+    return 1.0f - (1.0f - kRedlineTorqueFactor) * t;
+}
+
+float gearRatioOf(int gear) {
+    return gear == -1 ? kReverseGearRatio : kGearRatios[gear - 1];
+}
 
 std::vector<glm::vec3> wheelRimCircle(float x, float radius) {
     std::vector<glm::vec3> rim(kWheelSegments);
@@ -249,14 +280,18 @@ void Vehicle::update(float dt, float throttle, float steer) {
     glm::vec3 right(std::cos(yaw_), 0.0f, -std::sin(yaw_));
     float lateralSpeed = 0.0f;
 
+    shiftTimer_ = std::max(0.0f, shiftTimer_ - dt);
+    shiftCooldown_ = std::max(0.0f, shiftCooldown_ - dt);
+
     if (grounded_) {
         speed_ = glm::dot(velocity_, forward);
 
+        float torqueFactor = shiftTimer_ > 0.0f ? 0.0f : engineTorqueFactor(engineRpm_);
         if (throttle > 0.0f) {
-            speed_ += throttle * kAcceleration * dt;
+            speed_ += throttle * kAcceleration * torqueFactor * dt;
         } else if (throttle < 0.0f) {
             if (speed_ > 0.1f) speed_ += throttle * kBrakeDeceleration * dt;
-            else speed_ += throttle * kAcceleration * dt;
+            else speed_ += throttle * kAcceleration * torqueFactor * dt;
         } else {
             float friction = kFriction * dt;
             if (speed_ > 0.0f) speed_ = std::max(0.0f, speed_ - friction);
@@ -292,6 +327,31 @@ void Vehicle::update(float dt, float throttle, float steer) {
             ? -(tiltNormal_.x * forward.x + tiltNormal_.z * forward.z) / tiltNormal_.y
             : 0.0f;
         vY_ = slope * speed_;
+
+        float wheelRpm = std::abs(speed_) / kWheelRadius * (60.0f / 6.2831853f);
+        float drivetrainRpm = wheelRpm * gearRatioOf(gear_) * kFinalDrive;
+        float idleBlip = std::max(0.0f, 0.5f - std::abs(speed_)) * std::abs(throttle) * kIdleBlipPerThrottle;
+        float targetRpm = std::clamp(kIdleRpm + drivetrainRpm + idleBlip, kIdleRpm, kRedlineRpm + 300.0f);
+        engineRpm_ += (targetRpm - engineRpm_) * std::min(1.0f, kRpmSmoothRate * dt);
+
+        bool climbingUphill = speed_ > 0.5f && slope > kUphillSlopeThreshold;
+        if (shiftTimer_ <= 0.0f && shiftCooldown_ <= 0.0f) {
+            auto shiftTo = [&](int newGear) {
+                gear_ = newGear;
+                shiftTimer_ = kShiftDuration;
+                shiftCooldown_ = kShiftCooldown;
+            };
+            if (gear_ == -1) {
+                if (throttle > 0.0f && speed_ > -0.3f) shiftTo(1);
+            } else if (gear_ == 1 && throttle < 0.0f && std::abs(speed_) < 0.3f) {
+                shiftTo(-1);
+            } else if (gear_ < kNumForwardGears && engineRpm_ > kUpshiftRpm && throttle > 0.0f) {
+                shiftTo(gear_ + 1);
+            } else if (gear_ > 1 && ((climbingUphill && engineRpm_ < kLugRpm && throttle > 0.1f) ||
+                                      engineRpm_ < kDownshiftRpm)) {
+                shiftTo(gear_ - 1);
+            }
+        }
     }
 
     vY_ += kGravity * dt;
