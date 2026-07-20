@@ -52,27 +52,37 @@ std::vector<glm::vec3> wheelRimCircle(float x, float radius) {
     return rim;
 }
 
-// Solid tire (outer cylinder only, end caps + side wall) for the depth pre-pass:
-// enough to occlude the wireframe wheel/spokes behind it without needing the
-// hub geometry to be solid too.
+// Solid tire for the depth pre-pass: the tread (outer cylinder side wall) plus
+// an *annulus* on each side face between kHubRadius and the outer edge - not a
+// full disc. That leaves the middle open (matching the wireframe hub's hole),
+// so the hub/spokes stay visible through it instead of being sealed inside an
+// opaque drum.
 std::vector<Vertex> buildWheelSolidMesh() {
     std::vector<Vertex> verts;
     glm::vec3 color(kWheelBrightness);
 
     auto front = wheelRimCircle(kTireHalfWidth, 1.0f);
     auto back = wheelRimCircle(-kTireHalfWidth, 1.0f);
-    glm::vec3 frontCenter(kTireHalfWidth, 0.0f, 0.0f);
-    glm::vec3 backCenter(-kTireHalfWidth, 0.0f, 0.0f);
+    auto frontInner = wheelRimCircle(kTireHalfWidth, kHubRadius);
+    auto backInner = wheelRimCircle(-kTireHalfWidth, kHubRadius);
 
     for (int i = 0; i < kWheelSegments; ++i) {
         int j = (i + 1) % kWheelSegments;
-        // End caps.
-        verts.push_back({frontCenter, color});
+        // Side annuli (quad -> two triangles each).
         verts.push_back({front[static_cast<size_t>(i)], color});
         verts.push_back({front[static_cast<size_t>(j)], color});
-        verts.push_back({backCenter, color});
+        verts.push_back({frontInner[static_cast<size_t>(j)], color});
+        verts.push_back({front[static_cast<size_t>(i)], color});
+        verts.push_back({frontInner[static_cast<size_t>(j)], color});
+        verts.push_back({frontInner[static_cast<size_t>(i)], color});
+
         verts.push_back({back[static_cast<size_t>(i)], color});
         verts.push_back({back[static_cast<size_t>(j)], color});
+        verts.push_back({backInner[static_cast<size_t>(j)], color});
+        verts.push_back({back[static_cast<size_t>(i)], color});
+        verts.push_back({backInner[static_cast<size_t>(j)], color});
+        verts.push_back({backInner[static_cast<size_t>(i)], color});
+
         // Tire tread side wall (quad -> two triangles).
         verts.push_back({front[static_cast<size_t>(i)], color});
         verts.push_back({back[static_cast<size_t>(i)], color});

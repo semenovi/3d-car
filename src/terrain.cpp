@@ -5,54 +5,11 @@
 #include <cstdlib>
 #include <vector>
 
+#include "landscape.h"
+#include "noise.h"
 #include "palette.h"
 
 namespace {
-
-// ---- deterministic hash-based value noise (no external noise library) ----
-
-uint32_t hash2i(int x, int z, uint32_t seed) {
-    uint32_t h = static_cast<uint32_t>(x) * 374761393u + static_cast<uint32_t>(z) * 668265263u + seed * 2246822519u;
-    h = (h ^ (h >> 13)) * 1274126177u;
-    return h ^ (h >> 16);
-}
-
-float hashFloat(int x, int z, uint32_t seed) {
-    return static_cast<float>(hash2i(x, z, seed) & 0xFFFFFFu) / static_cast<float>(0xFFFFFFu);
-}
-
-float smoothstep(float t) { return t * t * (3.0f - 2.0f * t); }
-
-float valueNoise(float x, float z, uint32_t seed) {
-    int x0 = static_cast<int>(std::floor(x));
-    int z0 = static_cast<int>(std::floor(z));
-    int x1 = x0 + 1, z1 = z0 + 1;
-    float tx = smoothstep(x - static_cast<float>(x0));
-    float tz = smoothstep(z - static_cast<float>(z0));
-
-    float v00 = hashFloat(x0, z0, seed);
-    float v10 = hashFloat(x1, z0, seed);
-    float v01 = hashFloat(x0, z1, seed);
-    float v11 = hashFloat(x1, z1, seed);
-
-    float a = v00 + (v10 - v00) * tx;
-    float b = v01 + (v11 - v01) * tx;
-    return a + (b - a) * tz;
-}
-
-float fbm(float x, float z) {
-    float amplitude = 1.0f;
-    float frequency = 1.0f;
-    float sum = 0.0f;
-    float maxAmp = 0.0f;
-    for (int octave = 0; octave < 5; ++octave) {
-        sum += valueNoise(x * frequency, z * frequency, static_cast<uint32_t>(octave) * 101u + 7u) * amplitude;
-        maxAmp += amplitude;
-        amplitude *= 0.5f;
-        frequency *= 2.03f;
-    }
-    return sum / maxAmp;
-}
 
 constexpr glm::vec3 kLightDir = glm::vec3(0.35f, 0.82f, 0.45f); // normalized-ish, points toward the "sun"
 
@@ -66,24 +23,9 @@ float diffuseBrightness(const glm::vec3& normal) {
 
 } // namespace
 
-float Terrain::heightAt(float worldX, float worldZ) {
-    float base = fbm(worldX * 0.012f, worldZ * 0.012f);
-    // Re-center around 0 and shape into rolling hills with occasional larger swells.
-    float hills = (base - 0.5f) * 14.0f;
-    float swellsRaw = valueNoise(worldX * 0.0025f, worldZ * 0.0025f, 999u);
-    float swells = (swellsRaw - 0.5f) * 10.0f;
-    return hills + swells;
-}
+float Terrain::heightAt(float worldX, float worldZ) { return landscape::heightAt(worldX, worldZ); }
 
-glm::vec3 Terrain::normalAt(float worldX, float worldZ) {
-    const float eps = 0.75f;
-    float hL = heightAt(worldX - eps, worldZ);
-    float hR = heightAt(worldX + eps, worldZ);
-    float hD = heightAt(worldX, worldZ - eps);
-    float hU = heightAt(worldX, worldZ + eps);
-    glm::vec3 n = glm::normalize(glm::vec3(hL - hR, 2.0f * eps, hD - hU));
-    return n;
-}
+glm::vec3 Terrain::normalAt(float worldX, float worldZ) { return landscape::normalAt(worldX, worldZ); }
 
 int64_t Terrain::chunkKey(int cx, int cz) {
     return (static_cast<int64_t>(cx) << 32) ^ static_cast<uint32_t>(cz);
@@ -199,8 +141,8 @@ void Terrain::loadChunk(VkCore& core, Renderer& renderer, int cx, int cz) {
                 glm::vec3 faceNormal = glm::normalize(glm::cross(tris[t].b - tris[t].a, tris[t].cc - tris[t].a));
                 float brightness = diffuseBrightness(faceNormal);
                 uint32_t seed = static_cast<uint32_t>((r * 73856093) ^ (c * 19349663) ^ (t * 83492791) ^ (cx * 15485863) ^ (cz * 32452843));
-                float u = hashFloat(static_cast<int>(seed), static_cast<int>(seed >> 8), 11u);
-                float v = hashFloat(static_cast<int>(seed >> 4), static_cast<int>(seed >> 12), 22u);
+                float u = noise::hashFloat(static_cast<int>(seed), static_cast<int>(seed >> 8), 11u);
+                float v = noise::hashFloat(static_cast<int>(seed >> 4), static_cast<int>(seed >> 12), 22u);
                 if (u + v > 1.0f) { u = 1.0f - u; v = 1.0f - v; }
                 glm::vec3 p = tris[t].a + (tris[t].b - tris[t].a) * u + (tris[t].cc - tris[t].a) * v;
                 pointVerts.push_back({p, glm::vec3(brightness)});

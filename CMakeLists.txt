@@ -70,6 +70,9 @@ add_executable(pickup_elite
     src/main.cpp
     src/vk_core.cpp
     src/renderer.cpp
+    src/noise.cpp
+    src/roads.cpp
+    src/landscape.cpp
     src/terrain.cpp
     src/vehicle.cpp
     src/vecfont.cpp
