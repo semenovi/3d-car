@@ -36,44 +36,83 @@ constexpr float kFriction = 4.0f;
 constexpr float kMaxSteerRadians = 0.55f;
 constexpr float kSteerRate = 2.5f; // how fast the steering angle approaches its target
 
+// Wheel local space: the spin axis is local X (the axle), the disc lies in the
+// Y-Z plane. kSegments is deliberately low (a low-poly tire, not a smooth
+// cylinder) - readable as a wireframe without cluttering the view.
+constexpr int kWheelSegments = 10;
+constexpr float kTireHalfWidth = 0.34f; // tire thickness, as a fraction of wheel radius
+constexpr float kHubRadius = 0.55f;     // wheel rim radius, inset from the tire's outer edge
+
+std::vector<glm::vec3> wheelRimCircle(float x, float radius) {
+    std::vector<glm::vec3> rim(kWheelSegments);
+    for (int i = 0; i < kWheelSegments; ++i) {
+        float theta = (static_cast<float>(i) / static_cast<float>(kWheelSegments)) * 6.2831853f;
+        rim[static_cast<size_t>(i)] = glm::vec3(x, radius * std::cos(theta), radius * std::sin(theta));
+    }
+    return rim;
+}
+
+// Solid tire (outer cylinder only, end caps + side wall) for the depth pre-pass:
+// enough to occlude the wireframe wheel/spokes behind it without needing the
+// hub geometry to be solid too.
 std::vector<Vertex> buildWheelSolidMesh() {
-    constexpr int kSegments = 16;
     std::vector<Vertex> verts;
     glm::vec3 color(kWheelBrightness);
 
-    std::vector<glm::vec3> rim(kSegments);
-    for (int i = 0; i < kSegments; ++i) {
-        float theta = (static_cast<float>(i) / static_cast<float>(kSegments)) * 6.2831853f;
-        rim[static_cast<size_t>(i)] = glm::vec3(0.0f, std::cos(theta), std::sin(theta));
-    }
-    glm::vec3 center(0.0f);
-    for (int i = 0; i < kSegments; ++i) {
-        verts.push_back({center, color});
-        verts.push_back({rim[static_cast<size_t>(i)], color});
-        verts.push_back({rim[static_cast<size_t>((i + 1) % kSegments)], color});
+    auto front = wheelRimCircle(kTireHalfWidth, 1.0f);
+    auto back = wheelRimCircle(-kTireHalfWidth, 1.0f);
+    glm::vec3 frontCenter(kTireHalfWidth, 0.0f, 0.0f);
+    glm::vec3 backCenter(-kTireHalfWidth, 0.0f, 0.0f);
+
+    for (int i = 0; i < kWheelSegments; ++i) {
+        int j = (i + 1) % kWheelSegments;
+        // End caps.
+        verts.push_back({frontCenter, color});
+        verts.push_back({front[static_cast<size_t>(i)], color});
+        verts.push_back({front[static_cast<size_t>(j)], color});
+        verts.push_back({backCenter, color});
+        verts.push_back({back[static_cast<size_t>(i)], color});
+        verts.push_back({back[static_cast<size_t>(j)], color});
+        // Tire tread side wall (quad -> two triangles).
+        verts.push_back({front[static_cast<size_t>(i)], color});
+        verts.push_back({back[static_cast<size_t>(i)], color});
+        verts.push_back({back[static_cast<size_t>(j)], color});
+        verts.push_back({front[static_cast<size_t>(i)], color});
+        verts.push_back({back[static_cast<size_t>(j)], color});
+        verts.push_back({front[static_cast<size_t>(j)], color});
     }
     return verts;
 }
 
+// Wireframe wheel: a tire (two side rims + tread lines joining them) with a
+// smaller spoked hub/rim floating in the middle of the tire's width.
 std::vector<Vertex> buildWheelMesh() {
-    constexpr int kSegments = 16;
     constexpr int kSpokes = 5;
     std::vector<Vertex> verts;
     glm::vec3 color(kWheelBrightness);
 
-    std::vector<glm::vec3> rim(kSegments);
-    for (int i = 0; i < kSegments; ++i) {
-        float theta = (static_cast<float>(i) / static_cast<float>(kSegments)) * 6.2831853f;
-        rim[static_cast<size_t>(i)] = glm::vec3(0.0f, std::cos(theta), std::sin(theta));
+    auto front = wheelRimCircle(kTireHalfWidth, 1.0f);
+    auto back = wheelRimCircle(-kTireHalfWidth, 1.0f);
+    auto hub = wheelRimCircle(0.0f, kHubRadius);
+
+    for (int i = 0; i < kWheelSegments; ++i) {
+        int j = (i + 1) % kWheelSegments;
+        verts.push_back({front[static_cast<size_t>(i)], color});
+        verts.push_back({front[static_cast<size_t>(j)], color});
+        verts.push_back({back[static_cast<size_t>(i)], color});
+        verts.push_back({back[static_cast<size_t>(j)], color});
+        // Tread lines joining the two tire sidewalls.
+        verts.push_back({front[static_cast<size_t>(i)], color});
+        verts.push_back({back[static_cast<size_t>(i)], color});
+        // Hub/rim circle.
+        verts.push_back({hub[static_cast<size_t>(i)], color});
+        verts.push_back({hub[static_cast<size_t>(j)], color});
     }
-    for (int i = 0; i < kSegments; ++i) {
-        verts.push_back({rim[static_cast<size_t>(i)], color});
-        verts.push_back({rim[static_cast<size_t>((i + 1) % kSegments)], color});
-    }
+    glm::vec3 hubCenter(0.0f);
     for (int s = 0; s < kSpokes; ++s) {
-        int i = (s * kSegments) / kSpokes;
-        verts.push_back({glm::vec3(0.0f), color});
-        verts.push_back({rim[static_cast<size_t>(i)], color});
+        int i = (s * kWheelSegments) / kSpokes;
+        verts.push_back({hubCenter, color});
+        verts.push_back({hub[static_cast<size_t>(i)], color});
     }
     return verts;
 }
