@@ -10,6 +10,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "audio.h"
 #include "renderer.h"
 #include "terrain.h"
 #include "vecfont.h"
@@ -77,6 +78,7 @@ int main() {
     Renderer renderer;
     Terrain terrain;
     Vehicle vehicle;
+    AudioEngine audio;
 
     try {
         core.init(window);
@@ -84,10 +86,13 @@ int main() {
         renderer.init(core);
         terrain.init(core, renderer);
         vehicle.init(core, renderer);
+        audio.init();
     } catch (const std::exception& e) {
         fprintf(stderr, "initialization failed: %s\n", e.what());
         return 1;
     }
+
+    int lastGear = vehicle.gear();
 
     constexpr size_t kMaxOverlayChars = 48;
     constexpr size_t kMaxOverlayVertsPerChar = 14;
@@ -137,6 +142,12 @@ int main() {
         if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) steer += 1.0f;
         vehicle.update(dt, throttle, steer);
         terrain.update(core, renderer, vehicle.position());
+
+        if (vehicle.gear() != lastGear) {
+            audio.triggerShift();
+            lastGear = vehicle.gear();
+        }
+        audio.update(vehicle.engineRpm(), vehicle.lateralSpeed(), vehicle.grounded(), throttle);
 
         glm::vec3 target = vehicle.position() + glm::vec3(0.0f, 1.3f, 0.0f);
         float baseAngle = vehicle.yaw() + glm::pi<float>() + state.orbitYaw;
@@ -204,6 +215,7 @@ int main() {
     }
 
     core.waitIdle();
+    audio.cleanup();
     renderer.destroyMesh(core, overlayMesh);
     vehicle.cleanup(core, renderer);
     terrain.cleanup(core, renderer);

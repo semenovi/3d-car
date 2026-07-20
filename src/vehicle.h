@@ -23,6 +23,8 @@ public:
     int gear() const { return gear_; }
     float engineRpm() const { return engineRpm_; }
     float speedKmh() const { return speed_ * 3.6f; }
+    float lateralSpeed() const { return lateralSpeed_; }
+    bool grounded() const { return grounded_; }
 
 private:
     struct WheelSpec { glm::vec3 offset; bool steers; };
@@ -47,6 +49,7 @@ private:
     glm::vec3 velocity_ = glm::vec3(0.0f);
     float vY_ = 0.0f;
     bool grounded_ = true;
+    float lateralSpeed_ = 0.0f;
 
     float suspensionOffset_ = 0.0f;
     float suspensionVel_ = 0.0f;
@@ -59,4 +62,5 @@ private:
     float engineRpm_ = 900.0f;
     float shiftTimer_ = 0.0f;
     float shiftCooldown_ = 0.0f;
+    float groundedTime_ = 0.0f;
 };

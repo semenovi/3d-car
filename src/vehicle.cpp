@@ -40,6 +40,10 @@ constexpr float kSteerSpeedSensitivity = 0.05f;
 
 constexpr float kGravity = -18.0f;
 constexpr float kMaxLateralDecel = 13.0f;
+constexpr float kDriftDriveLoss = 0.12f;
+constexpr float kBrakeLateralGain = 10.0f;
+constexpr float kLateralDragPerLateral = 0.5f;
+constexpr float kDriftYawLoss = 0.05f;
 constexpr float kGroundSnapEpsilon = 0.02f;
 constexpr float kAnyCornerGroundedSlack = 1.2f;
 
@@ -88,6 +92,7 @@ constexpr float kRpmSmoothRate = 6.0f;
 constexpr float kIdleBlipPerThrottle = 1200.0f;
 constexpr float kShiftDuration = 0.28f;
 constexpr float kShiftCooldown = 0.5f;
+constexpr float kShiftMinGroundedTime = 0.3f;
 
 float engineTorqueFactor(float rpm) {
     if (rpm <= kPeakTorqueRpm) {
@@ -284,14 +289,17 @@ void Vehicle::update(float dt, float throttle, float steer) {
     shiftCooldown_ = std::max(0.0f, shiftCooldown_ - dt);
 
     if (grounded_) {
+        groundedTime_ += dt;
         speed_ = glm::dot(velocity_, forward);
 
         float torqueFactor = shiftTimer_ > 0.0f ? 0.0f : engineTorqueFactor(engineRpm_);
+        float lateralBefore = std::abs(glm::dot(velocity_, right));
+        float driveFactor = 1.0f / (1.0f + kDriftDriveLoss * lateralBefore);
         if (throttle > 0.0f) {
-            speed_ += throttle * kAcceleration * torqueFactor * dt;
+            speed_ += throttle * kAcceleration * torqueFactor * driveFactor * dt;
         } else if (throttle < 0.0f) {
             if (speed_ > 0.1f) speed_ += throttle * kBrakeDeceleration * dt;
-            else speed_ += throttle * kAcceleration * torqueFactor * dt;
+            else speed_ += throttle * kAcceleration * torqueFactor * driveFactor * dt;
         } else {
             float friction = kFriction * dt;
             if (speed_ > 0.0f) speed_ = std::max(0.0f, speed_ - friction);
@@ -307,14 +315,17 @@ void Vehicle::update(float dt, float throttle, float steer) {
         steerAngle_ += std::clamp(steerDelta, -maxDelta, maxDelta);
 
         if (std::abs(speed_) > 0.01f) {
-            yaw_ += (speed_ / kWheelbase) * std::tan(steerAngle_) * dt;
+            float yawAuthority = 1.0f / (1.0f + kDriftYawLoss * lateralBefore);
+            yaw_ += (speed_ / kWheelbase) * std::tan(steerAngle_) * yawAuthority * dt;
         }
         forward = glm::vec3(std::sin(yaw_), 0.0f, std::cos(yaw_));
         right = glm::vec3(std::cos(yaw_), 0.0f, -std::sin(yaw_));
 
         lateralSpeed = glm::dot(velocity_, right);
 
-        float maxRemovable = kMaxLateralDecel * dt;
+        float lateralDecel = kMaxLateralDecel + kLateralDragPerLateral * std::abs(lateralSpeed) +
+                             (throttle < 0.0f ? -throttle * kBrakeLateralGain : 0.0f);
+        float maxRemovable = lateralDecel * dt;
         if (std::abs(lateralSpeed) <= maxRemovable) {
             lateralSpeed = 0.0f;
         } else {
@@ -322,6 +333,13 @@ void Vehicle::update(float dt, float throttle, float steer) {
         }
 
         velocity_ = forward * speed_ + right * lateralSpeed;
+        float horizSpeed = glm::length(velocity_);
+        if (horizSpeed > kMaxSpeed) {
+            velocity_ *= kMaxSpeed / horizSpeed;
+            speed_ = glm::dot(velocity_, forward);
+            lateralSpeed = glm::dot(velocity_, right);
+        }
+        lateralSpeed_ = lateralSpeed;
 
         float slope = tiltNormal_.y > 1e-3f
             ? -(tiltNormal_.x * forward.x + tiltNormal_.z * forward.z) / tiltNormal_.y
@@ -335,7 +353,7 @@ void Vehicle::update(float dt, float throttle, float steer) {
         engineRpm_ += (targetRpm - engineRpm_) * std::min(1.0f, kRpmSmoothRate * dt);
 
         bool climbingUphill = speed_ > 0.5f && slope > kUphillSlopeThreshold;
-        if (shiftTimer_ <= 0.0f && shiftCooldown_ <= 0.0f) {
+        if (shiftTimer_ <= 0.0f && shiftCooldown_ <= 0.0f && groundedTime_ >= kShiftMinGroundedTime) {
             auto shiftTo = [&](int newGear) {
                 gear_ = newGear;
                 shiftTimer_ = kShiftDuration;
@@ -352,6 +370,9 @@ void Vehicle::update(float dt, float throttle, float steer) {
                 shiftTo(gear_ - 1);
             }
         }
+    } else {
+        groundedTime_ = 0.0f;
+        lateralSpeed_ = 0.0f;
     }
 
     vY_ += kGravity * dt;

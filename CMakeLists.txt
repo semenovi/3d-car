@@ -38,7 +38,14 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
-FetchContent_MakeAvailable(glfw glm tinyobjloader)
+FetchContent_Declare(
+    miniaudio
+    GIT_REPOSITORY https://github.com/mackron/miniaudio.git
+    GIT_TAG 0.11.21
+    GIT_SHALLOW TRUE
+)
+
+FetchContent_MakeAvailable(glfw glm tinyobjloader miniaudio)
 
 find_program(GLSLC_EXECUTABLE glslc HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin")
 if(NOT GLSLC_EXECUTABLE)
@@ -75,11 +82,12 @@ add_executable(pickup_elite
     src/terrain.cpp
     src/vehicle.cpp
     src/vecfont.cpp
+    src/audio.cpp
 )
 
 add_dependencies(pickup_elite shaders)
 
-target_include_directories(pickup_elite PRIVATE src ${tinyobjloader_SOURCE_DIR})
+target_include_directories(pickup_elite PRIVATE src ${tinyobjloader_SOURCE_DIR} ${miniaudio_SOURCE_DIR})
 target_link_libraries(pickup_elite PRIVATE Vulkan::Vulkan glfw glm::glm)
 
 target_compile_definitions(pickup_elite PRIVATE
