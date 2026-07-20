@@ -1,8 +1,5 @@
 #version 450
 
-// Screen-space overlay pass (FPS counter vector font): input positions are already
-// in normalized device coordinates, so no view/projection transform is applied.
-
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inColor;
 

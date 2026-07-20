@@ -4,17 +4,6 @@ namespace {
 
 struct Seg { float x0, y0, x1, y1; };
 
-// Unit-box control points (0,0)=bottom-left .. (1,1)=top-right, the classic
-// 7-segment layout:
-//   TL--top--TR
-//   |         |
-//  topleft topright
-//   |         |
-//   ML--mid--MR
-//   |         |
-//  botleft botright
-//   |         |
-//   BL--bot--BR
 constexpr Seg kTop{0.0f, 1.0f, 1.0f, 1.0f};
 constexpr Seg kTopLeft{0.0f, 0.5f, 0.0f, 1.0f};
 constexpr Seg kTopRight{1.0f, 0.5f, 1.0f, 1.0f};
@@ -44,7 +33,7 @@ std::vector<Seg> glyphSegments(char c) {
     }
 }
 
-} // namespace
+}
 
 namespace vecfont {
 
@@ -56,7 +45,6 @@ std::vector<Vertex> buildText(const std::string& text, glm::vec2 originNdc, glm:
     float penX = originNdc.x;
     for (char c : text) {
         for (const Seg& seg : glyphSegments(c)) {
-            // Flip local Y (1 = glyph top) into NDC Y (more negative = up on screen).
             float x0 = penX + seg.x0 * glyphSize.x;
             float y0 = originNdc.y + (1.0f - seg.y0) * glyphSize.y;
             float x1 = penX + seg.x1 * glyphSize.x;
@@ -69,4 +57,4 @@ std::vector<Vertex> buildText(const std::string& text, glm::vec2 originNdc, glm:
     return verts;
 }
 
-} // namespace vecfont
+}

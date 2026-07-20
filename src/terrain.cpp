@@ -12,7 +12,7 @@
 
 namespace {
 
-constexpr glm::vec3 kLightDir = glm::vec3(0.35f, 0.82f, 0.45f); // normalized-ish, points toward the "sun"
+constexpr glm::vec3 kLightDir = glm::vec3(0.35f, 0.82f, 0.45f);
 
 float diffuseBrightness(const glm::vec3& normal) {
     glm::vec3 n = glm::normalize(normal);
@@ -22,7 +22,7 @@ float diffuseBrightness(const glm::vec3& normal) {
     return std::min(ambient + diffuse * 0.85f, 1.0f);
 }
 
-} // namespace
+}
 
 float Terrain::heightAt(float worldX, float worldZ) { return landscape::heightAt(worldX, worldZ); }
 
@@ -33,7 +33,6 @@ int64_t Terrain::chunkKey(int cx, int cz) {
 }
 
 void Terrain::init(VkCore&, Renderer&) {
-    // Chunks are loaded lazily by update() once we know the camera position.
 }
 
 void Terrain::cleanup(VkCore& core, Renderer& renderer) {
@@ -60,7 +59,6 @@ void Terrain::update(VkCore& core, Renderer& renderer, const glm::vec3& cameraPo
         }
     }
 
-    // Unload chunks that fell well outside the load radius (small hysteresis margin).
     const int unloadRadius = kLoadRadius + 1;
     for (auto it = chunks_.begin(); it != chunks_.end();) {
         int64_t key = it->first;
@@ -88,10 +86,6 @@ void Terrain::loadChunk(VkCore& core, Renderer& renderer, int cx, int cz) {
     std::vector<roads::EdgeSnap> snap((N + 1) * (N + 1));
     auto idx = [N](int r, int c) { return r * (N + 1) + c; };
 
-    // Snap grid vertices near a road's edge exactly onto it (see roads.h) -
-    // the road's outline ends up traced by this mesh's *own* real edges/
-    // vertices (see the boundary-line pass below), not separate overlay
-    // geometry that would need biasing to avoid depth-fighting the terrain.
     for (int r = 0; r <= N; ++r) {
         for (int c = 0; c <= N; ++c) {
             float latticeX = originX + static_cast<float>(c) * kCellSize;
@@ -119,7 +113,6 @@ void Terrain::loadChunk(VkCore& core, Renderer& renderer, int cx, int cz) {
         lineVerts.push_back({p1, glm::vec3(b1)});
     };
 
-    // Grid lines (horizontal + vertical).
     for (int r = 0; r <= N; ++r)
         for (int c = 0; c < N; ++c) pushEdge(r, c, r, c + 1);
     for (int c = 0; c <= N; ++c)
@@ -130,12 +123,6 @@ void Terrain::loadChunk(VkCore& core, Renderer& renderer, int cx, int cz) {
                           roadMask[static_cast<size_t>(idx(r, c + 1))], roadMask[static_cast<size_t>(idx(r + 1, c + 1))]}) > 0.05f;
     };
 
-    // Diagonal edges (checkerboard, to keep the mesh from becoming too
-    // cluttered) - skipped near roads. On the road's flat, regular ground the
-    // diagonals of many consecutive cells end up collinear (nothing breaks
-    // their angle the way wild terrain's bumps do), so they'd read as long,
-    // straight, spurious-looking lines slicing across the road instead of
-    // the road's own boundary (the snapped-vertex polyline below).
     for (int r = 0; r < N; ++r) {
         for (int c = 0; c < N; ++c) {
             if (nearRoad(r, c)) continue;
@@ -143,18 +130,11 @@ void Terrain::loadChunk(VkCore& core, Renderer& renderer, int cx, int cz) {
         }
     }
 
-    // Road boundary lines: connect consecutive snapped vertices (see the snap
-    // loop above) into a continuous polyline tracing each edge. Grouped by
-    // "role" (which family/side a vertex snapped to), not by row/column index
-    // - the lattice column/row nearest to a curving road's edge shifts as the
-    // road wanders, so two consecutive rows' snapped points are often in
-    // different columns (and vice-versa for a horizontal road's columns).
     auto pushBoundarySegment = [&](int idxA, int idxB) {
         lineVerts.push_back({pos[static_cast<size_t>(idxA)], glm::vec3(1.0f)});
         lineVerts.push_back({pos[static_cast<size_t>(idxB)], glm::vec3(1.0f)});
     };
     for (float side : {-1.0f, 1.0f}) {
-        // Vertical-family roads: one snapped column (if any) per row.
         int prevIdx = -1;
         for (int r = 0; r <= N; ++r) {
             int found = -1;
@@ -165,7 +145,6 @@ void Terrain::loadChunk(VkCore& core, Renderer& renderer, int cx, int cz) {
             if (prevIdx >= 0 && found >= 0) pushBoundarySegment(prevIdx, found);
             prevIdx = found;
         }
-        // Horizontal-family roads: one snapped row (if any) per column.
         prevIdx = -1;
         for (int c = 0; c <= N; ++c) {
             int found = -1;
@@ -178,9 +157,6 @@ void Terrain::loadChunk(VkCore& core, Renderer& renderer, int cx, int cz) {
         }
     }
 
-    // Scattered points across every triangle for surface readability, plus the
-    // same triangles as solid (invisible) geometry for the depth pre-pass, so
-    // terrain on the far side of a hill doesn't show through it.
     std::vector<Vertex> pointVerts;
     std::vector<Vertex> solidVerts;
     pointVerts.reserve(static_cast<size_t>(N * N * 2));
@@ -194,7 +170,6 @@ void Terrain::loadChunk(VkCore& core, Renderer& renderer, int cx, int cz) {
 
             bool onRoad = nearRoad(r, c);
 
-            // Triangle A: p00, p10, p01 ; Triangle B: p10, p11, p01
             struct Tri { glm::vec3 a, b, cc; };
             Tri tris[2] = {{p00, p10, p01}, {p10, p11, p01}};
             for (int t = 0; t < 2; ++t) {
@@ -202,8 +177,6 @@ void Terrain::loadChunk(VkCore& core, Renderer& renderer, int cx, int cz) {
                 float brightness = diffuseBrightness(faceNormal);
 
                 if (!onRoad) {
-                    // Same reasoning as the diagonal-edge skip above: keep the
-                    // scattered-point texture for wild terrain, not the road.
                     uint32_t seed = static_cast<uint32_t>((r * 73856093) ^ (c * 19349663) ^ (t * 83492791) ^ (cx * 15485863) ^ (cz * 32452843));
                     float u = noise::hashFloat(static_cast<int>(seed), static_cast<int>(seed >> 8), 11u);
                     float v = noise::hashFloat(static_cast<int>(seed >> 4), static_cast<int>(seed >> 12), 22u);

@@ -14,7 +14,7 @@ uint32_t hash2i(int x, int z, uint32_t seed) {
 
 float smoothstep(float t) { return t * t * (3.0f - 2.0f * t); }
 
-} // namespace
+}
 
 float hashFloat(int x, int z, uint32_t seed) {
     return static_cast<float>(hash2i(x, z, seed) & 0xFFFFFFu) / static_cast<float>(0xFFFFFFu);
@@ -71,4 +71,4 @@ float fbmRidged(float x, float z, int octaves, uint32_t seedBase) {
     return maxAmp > 0.0f ? sum / maxAmp : 0.0f;
 }
 
-} // namespace noise
+}

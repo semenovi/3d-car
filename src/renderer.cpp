@@ -15,7 +15,7 @@ struct SceneUBO {
 
 struct PushConstants {
     glm::mat4 model;
-    glm::vec4 params; // x = point size
+    glm::vec4 params;
 };
 
 std::vector<char> readFile(const std::string& path) {
@@ -28,7 +28,7 @@ std::vector<char> readFile(const std::string& path) {
     return buffer;
 }
 
-} // namespace
+}
 
 VkShaderModule Renderer::loadShader(VkCore& core, const char* filename) const {
     std::string path = std::string(SHADER_DIR) + filename;
@@ -141,7 +141,7 @@ VkPipelineShaderStageCreateInfo stageInfo(VkShaderStageFlagBits stage, VkShaderM
     return info;
 }
 
-} // namespace
+}
 
 void Renderer::createScenePipelines(VkCore& core) {
     VkShaderModule vert = loadShader(core, "scene.vert.spv");
@@ -175,9 +175,6 @@ void Renderer::createScenePipelines(VkCore& core) {
     VkPipelineDepthStencilStateCreateInfo depthStencil{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
     depthStencil.depthTestEnable = VK_TRUE;
     depthStencil.depthWriteEnable = VK_TRUE;
-    // LESS_OR_EQUAL (not LESS): line/point vertices are the exact same positions
-    // as the depth pre-pass triangles they belong to, so their depth is bit-exact
-    // equal, not just close - LESS would fail that comparison and cull them.
     depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 
     VkPipelineColorBlendAttachmentState blendAttachment{};
@@ -222,19 +219,7 @@ void Renderer::createScenePipelines(VkCore& core) {
     pipelineInfo.renderPass = core.renderPass();
     pipelineInfo.subpass = 0;
 
-    // Lines/points share their exact vertex positions with the depth pre-pass
-    // triangles they sit on. LESS_OR_EQUAL alone still leaves per-pixel depth
-    // interpolation differences between a triangle and a line/point at the same
-    // spot (line rasterization vs. triangle rasterization round slightly
-    // differently), which flickers as dashed lines. A small negative depth bias
-    // nudges lines/points reliably in front so they always win that tie.
     raster.depthBiasEnable = VK_TRUE;
-    // Large bias: thin line/point geometry (e.g. road edges traced along the
-    // exact height function) generally does *not* land exactly on the depth
-    // pre-pass triangles under it - only the terrain's own grid lines do,
-    // since those share vertices with the mesh. Anything else (road edges,
-    // vehicle wireframe near the ground) needs enough bias to reliably beat
-    // the solid surface's interpolated depth, not just resolve exact ties.
     raster.depthBiasConstantFactor = -20.0f;
     raster.depthBiasSlopeFactor = -20.0f;
 
@@ -252,11 +237,6 @@ void Renderer::createScenePipelines(VkCore& core) {
         throw std::runtime_error("failed to create point pipeline");
     }
 
-    // Depth-only pre-pass: solid filled triangles, no color writes, no bias (it
-    // establishes the baseline depth that the biased line/point pipelines above
-    // then win against). Drawn before the line/point passes so occluded edges/
-    // points get discarded by the depth test instead of showing through solid
-    // geometry.
     raster.depthBiasEnable = VK_FALSE;
     VkPipelineColorBlendAttachmentState noColorAttachment = blendAttachment;
     noColorAttachment.colorWriteMask = 0;
@@ -306,7 +286,6 @@ void Renderer::createOverlayPipeline(VkCore& core) {
     VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-    // No depth test: overlay always draws on top, in its own final pass over the scene.
     VkPipelineDepthStencilStateCreateInfo depthStencil{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
     depthStencil.depthTestEnable = VK_FALSE;
     depthStencil.depthWriteEnable = VK_FALSE;

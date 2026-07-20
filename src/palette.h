@@ -5,10 +5,6 @@
 
 #include <glm/glm.hpp>
 
-// Elite-style rendering uses a black background with lines/points drawn in one of
-// 8 discrete grayscale shades (like the limited color ramps of old vector games).
-// Brightness is used both as fake diffuse shading (slope vs. light) and as a
-// distance cue (things fade toward the darkest shade and finally vanish).
 namespace palette {
 
 inline constexpr std::array<float, 8> kLevels = {
@@ -23,10 +19,8 @@ inline glm::vec3 shade(float brightness01) {
     return glm::vec3(g, g, g);
 }
 
-// Returns true if, after fog attenuation, the point would be indistinguishable
-// from the black background and should simply be culled from the mesh.
 inline bool isBelowVisibility(float brightness01) {
     return brightness01 <= 0.02f;
 }
 
-} // namespace palette
+}

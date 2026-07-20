@@ -6,8 +6,6 @@
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 
-// Shared vertex format for every draw in the game: a position and a precomputed
-// RGB color (already quantized to the 8-level grayscale palette on the CPU side).
 struct Vertex {
     glm::vec3 pos;
     glm::vec3 color;

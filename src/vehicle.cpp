@@ -17,8 +17,6 @@
 
 namespace {
 
-// Must match resources/models/pickup.obj (see scratch generator notes there):
-// half body width 0.92, wheelbase between hardcoded front/rear axle Z positions.
 constexpr float kWheelRadius = 0.48f;
 constexpr float kWheelX = 0.96f;
 constexpr float kWheelFrontZ = 1.35f;
@@ -35,14 +33,39 @@ constexpr float kAcceleration = 9.0f;
 constexpr float kBrakeDeceleration = 16.0f;
 constexpr float kFriction = 4.0f;
 constexpr float kMaxSteerRadians = 0.55f;
-constexpr float kSteerRate = 2.5f; // how fast the steering angle approaches its target
+constexpr float kSteerRate = 2.5f;
+constexpr float kSteerInputRate = 4.0f;
+constexpr float kMinSteerSpeedFactor = 0.4f;
+constexpr float kSteerSpeedSensitivity = 0.05f;
 
-// Wheel local space: the spin axis is local X (the axle), the disc lies in the
-// Y-Z plane. kSegments is deliberately low (a low-poly tire, not a smooth
-// cylinder) - readable as a wireframe without cluttering the view.
+constexpr float kGravity = -18.0f;
+constexpr float kMaxLateralDecel = 13.0f;
+constexpr float kGroundSnapEpsilon = 0.02f;
+
+constexpr float kSuspensionSpring = 220.0f;
+constexpr float kSuspensionDamping = 20.0f;
+constexpr float kImpactToSuspensionVel = 0.25f;
+constexpr float kMaxSuspensionCompress = -0.35f;
+constexpr float kMaxSuspensionExtend = 0.15f;
+
+constexpr float kPitchPerAccel = 0.015f;
+constexpr float kPitchRate = 7.0f;
+constexpr float kMaxPitch = 0.24f;
+
+constexpr float kRollPerLateralSpeed = 0.035f;
+constexpr float kRollRate = 6.0f;
+constexpr float kMaxRoll = 0.26f;
+
+constexpr float kGroundNormalSmoothRate = 10.0f;
+constexpr float kTiltSpringGrounded = 55.0f;
+constexpr float kTiltDampingGrounded = 15.0f;
+constexpr float kTiltSpringAir = 0.6f;
+constexpr float kTiltDampingAir = 0.5f;
+constexpr float kMaxTiltAngularVel = 4.0f;
+
 constexpr int kWheelSegments = 10;
-constexpr float kTireHalfWidth = 0.34f; // tire thickness, as a fraction of wheel radius
-constexpr float kHubRadius = 0.55f;     // wheel rim radius, inset from the tire's outer edge
+constexpr float kTireHalfWidth = 0.34f;
+constexpr float kHubRadius = 0.55f;
 
 std::vector<glm::vec3> wheelRimCircle(float x, float radius) {
     std::vector<glm::vec3> rim(kWheelSegments);
@@ -53,11 +76,6 @@ std::vector<glm::vec3> wheelRimCircle(float x, float radius) {
     return rim;
 }
 
-// Solid tire for the depth pre-pass: the tread (outer cylinder side wall) plus
-// an *annulus* on each side face between kHubRadius and the outer edge - not a
-// full disc. That leaves the middle open (matching the wireframe hub's hole),
-// so the hub/spokes stay visible through it instead of being sealed inside an
-// opaque drum.
 std::vector<Vertex> buildWheelSolidMesh() {
     std::vector<Vertex> verts;
     glm::vec3 color(kWheelBrightness);
@@ -69,7 +87,6 @@ std::vector<Vertex> buildWheelSolidMesh() {
 
     for (int i = 0; i < kWheelSegments; ++i) {
         int j = (i + 1) % kWheelSegments;
-        // Side annuli (quad -> two triangles each).
         verts.push_back({front[static_cast<size_t>(i)], color});
         verts.push_back({front[static_cast<size_t>(j)], color});
         verts.push_back({frontInner[static_cast<size_t>(j)], color});
@@ -84,7 +101,6 @@ std::vector<Vertex> buildWheelSolidMesh() {
         verts.push_back({backInner[static_cast<size_t>(j)], color});
         verts.push_back({backInner[static_cast<size_t>(i)], color});
 
-        // Tire tread side wall (quad -> two triangles).
         verts.push_back({front[static_cast<size_t>(i)], color});
         verts.push_back({back[static_cast<size_t>(i)], color});
         verts.push_back({back[static_cast<size_t>(j)], color});
@@ -95,8 +111,6 @@ std::vector<Vertex> buildWheelSolidMesh() {
     return verts;
 }
 
-// Wireframe wheel: a tire (two side rims + tread lines joining them) with a
-// smaller spoked hub/rim floating in the middle of the tire's width.
 std::vector<Vertex> buildWheelMesh() {
     constexpr int kSpokes = 5;
     std::vector<Vertex> verts;
@@ -112,10 +126,8 @@ std::vector<Vertex> buildWheelMesh() {
         verts.push_back({front[static_cast<size_t>(j)], color});
         verts.push_back({back[static_cast<size_t>(i)], color});
         verts.push_back({back[static_cast<size_t>(j)], color});
-        // Tread lines joining the two tire sidewalls.
         verts.push_back({front[static_cast<size_t>(i)], color});
         verts.push_back({back[static_cast<size_t>(i)], color});
-        // Hub/rim circle.
         verts.push_back({hub[static_cast<size_t>(i)], color});
         verts.push_back({hub[static_cast<size_t>(j)], color});
     }
@@ -167,9 +179,6 @@ std::vector<Vertex> loadBodyWireframe(const char* path) {
     return verts;
 }
 
-// Triangulated version of the same OBJ, used only for the invisible depth
-// pre-pass (fills the depth buffer so the far side of the body doesn't show
-// through as X-ray wireframe).
 std::vector<Vertex> loadBodySolid(const char* path) {
     tinyobj::ObjReaderConfig config;
     config.triangulate = true;
@@ -197,7 +206,7 @@ std::vector<Vertex> loadBodySolid(const char* path) {
     return verts;
 }
 
-} // namespace
+}
 
 void Vehicle::init(VkCore& core, Renderer& renderer) {
     auto bodyVerts = loadBodyWireframe(RESOURCE_DIR "models/pickup.obj");
@@ -210,8 +219,6 @@ void Vehicle::init(VkCore& core, Renderer& renderer) {
     auto wheelSolidVerts = buildWheelSolidMesh();
     wheelSolidMesh_ = renderer.uploadMesh(core, wheelSolidVerts);
 
-    // Spawn exactly on the i=0 north-south road (not just "near the origin",
-    // which the road network only happens to pass close to) and face along it.
     float spawnZ = 0.0f;
     float spawnX = roads::verticalLineX(0, spawnZ);
     position_ = glm::vec3(spawnX, Terrain::heightAt(spawnX, spawnZ), spawnZ);
@@ -233,38 +240,62 @@ void Vehicle::update(float dt, float throttle, float steer) {
     throttle = std::clamp(throttle, -1.0f, 1.0f);
     steer = std::clamp(steer, -1.0f, 1.0f);
 
-    if (throttle > 0.0f) {
-        speed_ += throttle * kAcceleration * dt;
-    } else if (throttle < 0.0f) {
-        // Braking if moving forward, reversing if already stopped/slow.
-        if (speed_ > 0.1f) speed_ += throttle * kBrakeDeceleration * dt;
-        else speed_ += throttle * kAcceleration * dt;
-    } else {
-        float friction = kFriction * dt;
-        if (speed_ > 0.0f) speed_ = std::max(0.0f, speed_ - friction);
-        else speed_ = std::min(0.0f, speed_ + friction);
-    }
-    speed_ = std::clamp(speed_, -kReverseMaxSpeed, kMaxSpeed);
-
-    float targetSteer = steer * kMaxSteerRadians;
-    float steerDelta = targetSteer - steerAngle_;
-    float maxDelta = kSteerRate * dt;
-    steerAngle_ += std::clamp(steerDelta, -maxDelta, maxDelta);
-
-    if (std::abs(speed_) > 0.01f) {
-        yaw_ += (speed_ / kWheelbase) * std::tan(steerAngle_) * dt;
-    }
-
+    float prevSpeed = speed_;
     glm::vec3 forward(std::sin(yaw_), 0.0f, std::cos(yaw_));
-    position_ += forward * speed_ * dt;
-
-    // Sample ground height at all 4 wheel contact points (not just the body's
-    // center point) and fit a plane through them. A single center sample with
-    // a tiny finite-difference epsilon (see landscape::normalAt) can't see
-    // bumps/edges across the vehicle's actual 3m wheelbase / ~1.9m track
-    // width, so wheels would visibly clip through terrain the center-point
-    // normal didn't know about.
     glm::vec3 right(std::cos(yaw_), 0.0f, -std::sin(yaw_));
+    float lateralSpeed = 0.0f;
+
+    if (grounded_) {
+        speed_ = glm::dot(velocity_, forward);
+
+        if (throttle > 0.0f) {
+            speed_ += throttle * kAcceleration * dt;
+        } else if (throttle < 0.0f) {
+            if (speed_ > 0.1f) speed_ += throttle * kBrakeDeceleration * dt;
+            else speed_ += throttle * kAcceleration * dt;
+        } else {
+            float friction = kFriction * dt;
+            if (speed_ > 0.0f) speed_ = std::max(0.0f, speed_ - friction);
+            else speed_ = std::min(0.0f, speed_ + friction);
+        }
+        speed_ = std::clamp(speed_, -kReverseMaxSpeed, kMaxSpeed);
+
+        steerInput_ += (steer - steerInput_) * std::min(1.0f, kSteerInputRate * dt);
+        float speedFactor = std::max(kMinSteerSpeedFactor, 1.0f / (1.0f + kSteerSpeedSensitivity * std::abs(speed_)));
+        float targetSteer = steerInput_ * kMaxSteerRadians * speedFactor;
+        float steerDelta = targetSteer - steerAngle_;
+        float maxDelta = kSteerRate * dt;
+        steerAngle_ += std::clamp(steerDelta, -maxDelta, maxDelta);
+
+        if (std::abs(speed_) > 0.01f) {
+            yaw_ += (speed_ / kWheelbase) * std::tan(steerAngle_) * dt;
+        }
+        forward = glm::vec3(std::sin(yaw_), 0.0f, std::cos(yaw_));
+        right = glm::vec3(std::cos(yaw_), 0.0f, -std::sin(yaw_));
+
+        lateralSpeed = glm::dot(velocity_, right);
+
+        float maxRemovable = kMaxLateralDecel * dt;
+        if (std::abs(lateralSpeed) <= maxRemovable) {
+            lateralSpeed = 0.0f;
+        } else {
+            lateralSpeed -= std::copysign(maxRemovable, lateralSpeed);
+        }
+
+        velocity_ = forward * speed_ + right * lateralSpeed;
+
+        float slope = tiltNormal_.y > 1e-3f
+            ? -(tiltNormal_.x * forward.x + tiltNormal_.z * forward.z) / tiltNormal_.y
+            : 0.0f;
+        vY_ = slope * speed_;
+    }
+
+    vY_ += kGravity * dt;
+
+    position_.x += velocity_.x * dt;
+    position_.z += velocity_.z * dt;
+    position_.y += vY_ * dt;
+
     auto groundAt = [&](float localX, float localZ) {
         glm::vec3 world = position_ + right * localX + forward * localZ;
         return glm::vec3(world.x, Terrain::heightAt(world.x, world.z), world.z);
@@ -273,34 +304,76 @@ void Vehicle::update(float dt, float throttle, float steer) {
     glm::vec3 fr = groundAt(kWheelX, kWheelFrontZ);
     glm::vec3 rl = groundAt(-kWheelX, kWheelRearZ);
     glm::vec3 rr = groundAt(kWheelX, kWheelRearZ);
-
-    position_.y = (fl.y + fr.y + rl.y + rr.y) * 0.25f;
+    float groundY = (fl.y + fr.y + rl.y + rr.y) * 0.25f;
 
     glm::vec3 rawNormal = glm::cross(fr - rl, fl - rr);
     float rawLen = glm::length(rawNormal);
+    glm::vec3 groundNormal = tiltNormal_;
     if (rawLen > 1e-5f) {
-        glm::vec3 groundNormal = rawNormal / rawLen;
+        groundNormal = rawNormal / rawLen;
         if (groundNormal.y < 0.0f) groundNormal = -groundNormal;
-        tiltNormal_ = glm::mix(tiltNormal_, groundNormal, std::min(1.0f, dt * 6.0f));
     }
-    // else: degenerate sample (shouldn't happen on real terrain) - keep the
-    // previous tiltNormal_ rather than risk normalizing a near-zero vector.
+
+    bool wasAirborne = !grounded_;
+    if (position_.y <= groundY + kGroundSnapEpsilon) {
+        if (wasAirborne && vY_ < -1.0f) {
+            suspensionVel_ -= (-vY_) * kImpactToSuspensionVel;
+        }
+        position_.y = groundY;
+        vY_ = 0.0f;
+        grounded_ = true;
+    } else {
+        grounded_ = false;
+    }
+
+    auto expectedCornerY = [&](float localX, float localZ) {
+        glm::vec3 offset = right * localX + forward * localZ;
+        float dy = tiltNormal_.y > 1e-3f
+            ? -(tiltNormal_.x * offset.x + tiltNormal_.z * offset.z) / tiltNormal_.y
+            : 0.0f;
+        return position_.y + dy;
+    };
+    constexpr float kWheelContactSlack = 0.15f;
+    int contactCount = 0;
+    contactCount += fl.y >= expectedCornerY(-kWheelX, kWheelFrontZ) - kWheelContactSlack ? 1 : 0;
+    contactCount += fr.y >= expectedCornerY(kWheelX, kWheelFrontZ) - kWheelContactSlack ? 1 : 0;
+    contactCount += rl.y >= expectedCornerY(-kWheelX, kWheelRearZ) - kWheelContactSlack ? 1 : 0;
+    contactCount += rr.y >= expectedCornerY(kWheelX, kWheelRearZ) - kWheelContactSlack ? 1 : 0;
+    float contactFraction = static_cast<float>(contactCount) * 0.25f;
+
+    smoothedGroundNormal_ = glm::mix(smoothedGroundNormal_, groundNormal, std::min(1.0f, dt * kGroundNormalSmoothRate));
+    float smoothedLen = glm::length(smoothedGroundNormal_);
+    if (smoothedLen > 1e-5f) smoothedGroundNormal_ /= smoothedLen;
+
+    glm::vec3 error = smoothedGroundNormal_ - tiltNormal_;
+    float spring = kTiltSpringGrounded * contactFraction + kTiltSpringAir * (1.0f - contactFraction);
+    float damping = kTiltDampingGrounded * contactFraction + kTiltDampingAir * (1.0f - contactFraction);
+    tiltAngularVel_ += (error * spring - tiltAngularVel_ * damping) * dt;
+    float angVelLen = glm::length(tiltAngularVel_);
+    if (angVelLen > kMaxTiltAngularVel) tiltAngularVel_ *= kMaxTiltAngularVel / angVelLen;
+    tiltNormal_ += tiltAngularVel_ * dt;
+
     float tiltLen = glm::length(tiltNormal_);
     tiltNormal_ = tiltLen > 1e-5f ? tiltNormal_ / tiltLen : glm::vec3(0.0f, 1.0f, 0.0f);
 
-    wheelRoll_ += (speed_ / kWheelRadius) * dt;
+    suspensionVel_ += (-kSuspensionSpring * suspensionOffset_ - kSuspensionDamping * suspensionVel_) * dt;
+    suspensionOffset_ = std::clamp(suspensionOffset_ + suspensionVel_ * dt, kMaxSuspensionCompress, kMaxSuspensionExtend);
+
+    float accel = grounded_ ? (speed_ - prevSpeed) / std::max(dt, 1e-4f) : 0.0f;
+    float targetPitch = std::clamp(-accel * kPitchPerAccel, -kMaxPitch, kMaxPitch);
+    pitchOffset_ += (targetPitch - pitchOffset_) * std::min(1.0f, kPitchRate * dt);
+
+    float targetRoll = std::clamp(-lateralSpeed * kRollPerLateralSpeed, -kMaxRoll, kMaxRoll);
+    rollOffset_ += (targetRoll - rollOffset_) * std::min(1.0f, kRollRate * dt);
+
+    wheelRoll_ += (glm::dot(velocity_, forward) / kWheelRadius) * dt;
 }
 
-glm::mat4 Vehicle::bodyModelMatrix() const {
-    // Orthogonalize against `up` (the ground normal) first, and only derive
-    // `forward` from it afterwards - deriving `up` from the flat heading (as
-    // this used to do) throws away any pitch, leaving only roll.
+glm::mat4 Vehicle::groundModelMatrix() const {
     glm::vec3 headingFlat = glm::normalize(glm::vec3(std::sin(yaw_), 0.0f, std::cos(yaw_)));
     glm::vec3 up = glm::normalize(tiltNormal_);
     glm::vec3 rightRaw = glm::cross(up, headingFlat);
     float rightLen = glm::length(rightRaw);
-    // Degenerate only if `up` is (near-)horizontal, i.e. an ~90-degree slope -
-    // guard against it rather than normalize a near-zero vector into garbage.
     glm::vec3 right = rightLen > 1e-5f ? rightRaw / rightLen : glm::vec3(1.0f, 0.0f, 0.0f);
     glm::vec3 forward = glm::normalize(glm::cross(right, up));
 
@@ -312,8 +385,18 @@ glm::mat4 Vehicle::bodyModelMatrix() const {
     return model;
 }
 
+glm::mat4 Vehicle::bodyModelMatrix() const {
+    glm::mat4 model = groundModelMatrix();
+    glm::vec3 up(model[1]);
+
+    model[3] += glm::vec4(up * suspensionOffset_, 0.0f);
+    model = glm::rotate(model, pitchOffset_, glm::vec3(1.0f, 0.0f, 0.0f));
+    model = glm::rotate(model, rollOffset_, glm::vec3(0.0f, 0.0f, 1.0f));
+    return model;
+}
+
 std::array<glm::mat4, 4> Vehicle::wheelMatrices() const {
-    glm::mat4 body = bodyModelMatrix();
+    glm::mat4 body = groundModelMatrix();
     const WheelSpec specs[4] = {
         {{-kWheelX, kWheelY, kWheelFrontZ}, true},
         {{kWheelX, kWheelY, kWheelFrontZ}, true},

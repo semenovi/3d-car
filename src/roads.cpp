@@ -10,15 +10,9 @@ namespace roads {
 
 namespace {
 
-// Small relative to kSpacing on purpose - see the comment in roads.h.
 constexpr float kWanderAmplitude = 40.0f;
 constexpr float kWanderFreq = 1.0f / 260.0f;
 
-// How far sideways a road will shift to dodge a mountain/ravine, and how many
-// candidate offsets it weighs when deciding which way to lean. This is a soft
-// (weighted-average) choice rather than a hard "pick the best one", so the
-// road's course stays continuous as the terrain changes underneath it instead
-// of jumping between candidates.
 constexpr float kAvoidSearchRadius = 90.0f;
 constexpr int kAvoidCandidates = 5;
 
@@ -31,16 +25,12 @@ float dangerAt(float worldX, float worldZ) {
     return terrain_shapes::mountainRegionMask(worldX, worldZ) + terrain_shapes::ravineRegionMask(worldX, worldZ);
 }
 
-// Weighted average of candidate lateral offsets in [-kAvoidSearchRadius,
-// +kAvoidSearchRadius], favoring offsets with lower `danger`. sampleDanger
-// takes an offset and returns the danger at that offset from the nominal
-// position.
 template <typename DangerFn>
 float softAvoidOffset(DangerFn sampleDanger) {
     float weightedSum = 0.0f;
     float weightTotal = 0.0f;
     for (int k = 0; k < kAvoidCandidates; ++k) {
-        float t = static_cast<float>(k) / static_cast<float>(kAvoidCandidates - 1) * 2.0f - 1.0f; // -1..1
+        float t = static_cast<float>(k) / static_cast<float>(kAvoidCandidates - 1) * 2.0f - 1.0f;
         float offset = t * kAvoidSearchRadius;
         float danger = sampleDanger(offset);
         float weight = 1.0f / (1.0f + danger * 6.0f);
@@ -50,12 +40,8 @@ float softAvoidOffset(DangerFn sampleDanger) {
     return weightTotal > 1e-4f ? weightedSum / weightTotal : 0.0f;
 }
 
-} // namespace
+}
 
-// Wandering center of the vertical road line with grid index i, at a given
-// world Z. "i" is folded into the noise coordinate so each line gets its own
-// independent-looking wander pattern. Also leans sideways, away from any
-// mountain/ravine it would otherwise run through (see softAvoidOffset).
 float verticalLineX(int i, float worldZ) {
     float wander = noise::valueNoise(worldZ * kWanderFreq, static_cast<float>(i) * 91.7f, 501u);
     float candidate = static_cast<float>(i) * kSpacing + (wander - 0.5f) * 2.0f * kWanderAmplitude;
@@ -63,8 +49,6 @@ float verticalLineX(int i, float worldZ) {
     return candidate + avoid;
 }
 
-// Wandering center of the horizontal road line with grid index j, at a given
-// world X. Mirrors verticalLineX with the axes swapped.
 float horizontalLineZ(int j, float worldX) {
     float wander = noise::valueNoise(worldX * kWanderFreq, static_cast<float>(j) * 57.3f, 907u);
     float candidate = static_cast<float>(j) * kSpacing + (wander - 0.5f) * 2.0f * kWanderAmplitude;
@@ -140,13 +124,9 @@ LineHit bestHorizontalLine(float worldX, float worldZ) {
     return {bestDist, glm::vec2(worldX, bestCz), tangent};
 }
 
-// How close to a road's true edge (distance == kHalfWidth) a point needs to
-// be to get pulled onto it. Wider than half the terrain grid's cell size (see
-// Terrain::kCellSize) so that, whichever lattice column/row phase the grid
-// happens to land on, some vertex near each edge always falls in the band.
 constexpr float kSnapBand = 3.5f;
 
-} // namespace
+}
 
 EdgeSnap snapToRoadEdge(float worldX, float worldZ) {
     LineHit v = bestVerticalLine(worldX, worldZ);
@@ -165,4 +145,4 @@ EdgeSnap snapToRoadEdge(float worldX, float worldZ) {
     return {snapped.x, snapped.y, true, useVertical, side};
 }
 
-} // namespace roads
+}

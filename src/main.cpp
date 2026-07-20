@@ -28,7 +28,6 @@ struct AppState {
     float orbitYaw = 0.0f;
     float orbitPitch = 0.32f;
 
-    // Fullscreen toggle bookkeeping.
     bool fullscreen = false;
     int windowedX = 100, windowedY = 100, windowedW = kDefaultWidth, windowedH = kDefaultHeight;
     bool f11WasDown = false;
@@ -53,7 +52,7 @@ void toggleFullscreen(GLFWwindow* window, AppState& state) {
     }
 }
 
-} // namespace
+}
 
 int main() {
     if (!glfwInit()) {
@@ -90,9 +89,8 @@ int main() {
         return 1;
     }
 
-    // Dynamic mesh for the FPS counter text ("FPS: 123" comfortably fits in 16 chars).
     constexpr size_t kMaxOverlayChars = 24;
-    constexpr size_t kMaxOverlayVertsPerChar = 14; // worst case glyph (7 segments * 2 verts)
+    constexpr size_t kMaxOverlayVertsPerChar = 14;
     GpuMesh overlayMesh = renderer.uploadDynamicMesh(core, sizeof(Vertex) * kMaxOverlayChars * kMaxOverlayVertsPerChar);
 
     double lastTime = glfwGetTime();
@@ -106,7 +104,7 @@ int main() {
         double now = glfwGetTime();
         float dt = static_cast<float>(now - lastTime);
         lastTime = now;
-        dt = std::min(dt, 0.1f); // clamp huge spikes (e.g. window drag)
+        dt = std::min(dt, 0.1f);
 
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
             glfwSetWindowShouldClose(window, GLFW_TRUE);
@@ -116,7 +114,6 @@ int main() {
         if (f11Down && !state.f11WasDown) toggleFullscreen(window, state);
         state.f11WasDown = f11Down;
 
-        // ---- mouse-look ----
         double mx, my;
         glfwGetCursorPos(window, &mx, &my);
         if (state.firstMouse) {
@@ -133,7 +130,6 @@ int main() {
         state.orbitPitch += static_cast<float>(dy) * kMouseSensitivity;
         state.orbitPitch = std::clamp(state.orbitPitch, -0.9f, 1.2f);
 
-        // ---- WASD vehicle control ----
         float throttle = 0.0f, steer = 0.0f;
         if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) throttle += 1.0f;
         if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) throttle -= 1.0f;
@@ -142,7 +138,6 @@ int main() {
         vehicle.update(dt, throttle, steer);
         terrain.update(core, renderer, vehicle.position());
 
-        // ---- camera (mouse-orbit chase cam) ----
         glm::vec3 target = vehicle.position() + glm::vec3(0.0f, 1.3f, 0.0f);
         float baseAngle = vehicle.yaw() + glm::pi<float>() + state.orbitYaw;
         float pitch = state.orbitPitch;
@@ -154,11 +149,10 @@ int main() {
         VkExtent2D extent = core.extent();
         float aspect = extent.height > 0 ? static_cast<float>(extent.width) / static_cast<float>(extent.height) : 1.0f;
         glm::mat4 proj = glm::perspective(glm::radians(60.0f), aspect, 0.1f, Terrain::kFogDistance * 1.3f);
-        proj[1][1] *= -1.0f; // Vulkan clip space has +Y down
+        proj[1][1] *= -1.0f;
 
         glm::mat4 viewProj = proj * view;
 
-        // ---- FPS counter ----
         fpsAccum += dt;
         fpsFrameCount += 1;
         if (fpsAccum >= 0.25) {
@@ -177,15 +171,12 @@ int main() {
         auto overlayVerts = vecfont::buildText(fpsText, origin, glyphSize, spacingNdc, glm::vec3(1.0f));
         renderer.updateDynamicMesh(core, overlayMesh, overlayVerts);
 
-        // ---- render ----
         VkCommandBuffer cmd;
         uint32_t imageIndex;
         if (!core.beginFrame(cmd, imageIndex)) continue;
 
         renderer.beginSceneFrame(core, viewProj, cameraPos, Terrain::kFogDistance);
 
-        // Depth-only pre-pass first, so line/point draws below get occluded by
-        // solid geometry that's actually in front of them (real hidden-line removal).
         terrain.drawSolid(cmd, renderer);
         vehicle.drawSolid(cmd, renderer);
 

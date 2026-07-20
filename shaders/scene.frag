@@ -1,9 +1,5 @@
 #version 450
 
-// Quantizes the interpolated brightness down to one of 8 discrete grayscale
-// shades (like the limited palettes of old vector games), and drops fragments
-// that have faded into the black background entirely.
-
 layout(location = 0) in float fragBrightness;
 layout(location = 0) out vec4 outColor;
 

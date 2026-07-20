@@ -18,7 +18,7 @@ float rawRavineMask(float x, float z) {
     return std::clamp((m - 0.6f) / 0.4f, 0.0f, 1.0f);
 }
 
-} // namespace
+}
 
 float mountainRegionMask(float worldX, float worldZ) { return rawMountainMask(worldX, worldZ); }
 
@@ -36,4 +36,4 @@ float ravineDepth(float worldX, float worldZ) {
     return mask * ridge * ridge * 16.0f;
 }
 
-} // namespace terrain_shapes
+}

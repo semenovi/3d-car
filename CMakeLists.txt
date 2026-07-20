@@ -40,7 +40,6 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(glfw glm tinyobjloader)
 
-# ---- shader compilation (glslc -> SPIR-V) ----
 find_program(GLSLC_EXECUTABLE glslc HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin")
 if(NOT GLSLC_EXECUTABLE)
     message(FATAL_ERROR "glslc not found; set VULKAN_SDK environment variable")
@@ -65,7 +64,6 @@ endforeach()
 
 add_custom_target(shaders DEPENDS ${COMPILED_SHADERS})
 
-# ---- main executable ----
 add_executable(pickup_elite
     src/main.cpp
     src/vk_core.cpp

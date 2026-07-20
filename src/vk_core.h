@@ -7,9 +7,6 @@
 #include <optional>
 #include <vector>
 
-// Thin wrapper around the "boilerplate" 90% of Vulkan: instance, device, swapchain,
-// render pass, framebuffers, command pool and per-frame sync objects. Rendering
-// itself (pipelines, buffers, draw calls) lives in Renderer.
 class VkCore {
 public:
     static constexpr int kMaxFramesInFlight = 2;
@@ -20,7 +17,6 @@ public:
     void recreateSwapchain();
     void waitIdle();
 
-    // Returns false if the frame should be skipped (e.g. swapchain out of date).
     bool beginFrame(VkCommandBuffer& outCmd, uint32_t& outImageIndex);
     void endFrame(VkCommandBuffer cmd, uint32_t imageIndex);
 
@@ -42,7 +38,6 @@ public:
     };
     Buffer createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props) const;
     void destroyBuffer(Buffer& buf) const;
-    // Uploads data via a temporary host-visible staging buffer + one-time command buffer.
     Buffer createDeviceLocalBufferWithData(const void* data, VkDeviceSize size, VkBufferUsageFlags usage) const;
     void uploadToHostVisible(const Buffer& buf, const void* data, VkDeviceSize size) const;
 

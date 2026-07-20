@@ -23,9 +23,9 @@ const std::vector<const char*> kDeviceExtensions = {VK_KHR_SWAPCHAIN_EXTENSION_N
 
 VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT severity,
-    VkDebugUtilsMessageTypeFlagsEXT /*type*/,
+    VkDebugUtilsMessageTypeFlagsEXT,
     const VkDebugUtilsMessengerCallbackDataEXT* data,
-    void* /*userData*/) {
+    void*) {
     if (severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
         fprintf(stderr, "[vulkan] %s\n", data->pMessage);
     }
@@ -62,7 +62,7 @@ bool checkValidationLayerSupport() {
     return true;
 }
 
-} // namespace
+}
 
 void VkCore::init(GLFWwindow* window) {
     window_ = window;
@@ -283,9 +283,6 @@ VkSurfaceFormatKHR VkCore::chooseSurfaceFormat(const std::vector<VkSurfaceFormat
 }
 
 VkPresentModeKHR VkCore::choosePresentMode(const std::vector<VkPresentModeKHR>&) const {
-    // FIFO (regular vsync) is always supported and caps the loop to the display's
-    // refresh rate - this scene is light enough that an uncapped mode (mailbox)
-    // would just spin the GPU at thousands of FPS for no visual benefit.
     return VK_PRESENT_MODE_FIFO_KHR;
 }
 
@@ -577,7 +574,7 @@ bool VkCore::beginFrame(VkCommandBuffer& outCmd, uint32_t& outImageIndex) {
     vkBeginCommandBuffer(cmd, &beginInfo);
 
     std::array<VkClearValue, 2> clearValues{};
-    clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}}; // black background
+    clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
     clearValues[1].depthStencil = {1.0f, 0};
 
     VkRenderPassBeginInfo rpInfo{};
